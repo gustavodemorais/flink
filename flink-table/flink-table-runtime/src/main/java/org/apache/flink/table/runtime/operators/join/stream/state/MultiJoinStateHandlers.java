@@ -23,6 +23,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.typeinfo.Types;
+import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.typeutils.TupleTypeInfo;
 import org.apache.flink.configuration.Configuration;
@@ -213,6 +214,7 @@ public final class MultiJoinStateHandlers {
 
         private final StreamingMultiJoinOperator operator;
         private final StreamOperatorStateHandler stateHandler;
+        private final KeySelector<RowData, String> uniqueKeySelector;
 
         private final Configuration config;
         private final ClassLoader userCodeClassloader;
@@ -224,12 +226,14 @@ public final class MultiJoinStateHandlers {
         public MultiJoinHasUniqueKeyStateHandler(
                 int inputIndex,
                 StreamingMultiJoinOperator operator,
+                KeySelector<RowData, String> uniqueKeySelector,
                 StreamOperatorStateHandler stateHandler,
                 Configuration config,
                 ClassLoader userCodeClassloader,
                 JoinInputSideSpec inputSpec,
                 long stateRetentionTime) {
             this.operator = operator;
+            this.uniqueKeySelector = uniqueKeySelector;
             this.stateHandler = stateHandler;
             this.config = config;
             this.userCodeClassloader = userCodeClassloader;
@@ -262,13 +266,13 @@ public final class MultiJoinStateHandlers {
         public void addRecord(RowData record) throws Exception {
             // still hard coded, we'll use the key selector
             // TODO GUSTAVO
-            String key = record.getString(0).toString();
+            String key = uniqueKeySelector.getKey(record);
             recordState.put(key, record);
         }
 
         public void retractRecord(RowData record) throws Exception {
             // still hard coded, we'll use the key selector
-            String key = record.getString(0).toString();
+            String key = uniqueKeySelector.getKey(record);
             recordState.remove(key);
         }
     }
@@ -277,17 +281,18 @@ public final class MultiJoinStateHandlers {
 
         private final StreamingMultiJoinOperator operator;
         private final StreamOperatorStateHandler stateHandler;
-
+        private final KeySelector<RowData, String> uniqueKeySelector;
         private final Configuration config;
         private final ClassLoader userCodeClassloader;
         private final JoinInputSideSpec inputSpec;
         private final long stateRetentionTime;
 
-        private transient MapState<Integer, Tuple2<RowData, Integer>> recordState;
+        private transient MapState<String, Tuple2<RowData, Integer>> recordState;
 
         public MultiOuterJoinStateHandler(
                 int inputIndex,
                 StreamingMultiJoinOperator operator,
+                KeySelector<RowData, String> uniqueKeySelector,
                 StreamOperatorStateHandler stateHandler,
                 Configuration config,
                 ClassLoader userCodeClassloader,
@@ -296,6 +301,7 @@ public final class MultiJoinStateHandlers {
                 long stateRetentionTime) {
             this.operator = operator;
             this.stateHandler = stateHandler;
+            this.uniqueKeySelector = uniqueKeySelector; // should come from inputspec
             this.config = config;
             this.userCodeClassloader = userCodeClassloader;
             this.inputSpec = inputSpec;
@@ -308,10 +314,10 @@ public final class MultiJoinStateHandlers {
         private void initializeState(int inputIndex, InternalTypeInfo<RowData> recordType) {
             TupleTypeInfo<Tuple2<RowData, Integer>> valueTypeInfo =
                     new TupleTypeInfo<>(recordType, Types.INT);
-            MapStateDescriptor<Integer, Tuple2<RowData, Integer>> recordStateDesc =
+            MapStateDescriptor<String, Tuple2<RowData, Integer>> recordStateDesc =
                     new MapStateDescriptor<>(
                             "multi-join-record-state-" + inputIndex,
-                            InternalTypeInfo.of(Integer.class),
+                            InternalTypeInfo.of(String.class),
                             valueTypeInfo);
 
             this.operator
@@ -326,24 +332,24 @@ public final class MultiJoinStateHandlers {
         }
 
         public void addRecord(RowData record, int numOfAssociations) throws Exception {
-            int uniqueKey = getUniqueKey(record);
+            String uniqueKey = uniqueKeySelector.getKey(record);
             recordState.put(uniqueKey, Tuple2.of(record, numOfAssociations));
         }
 
         public void updateNumOfAssociations(RowData record, int numOfAssociations)
                 throws Exception {
-            int key = getUniqueKey(record);
+            String key = uniqueKeySelector.getKey(record);
             recordState.put(key, Tuple2.of(record, numOfAssociations));
         }
 
         public void retractRecord(RowData record) throws Exception {
             // still hard coded, we'll use the key selector
-            int key = getUniqueKey(record);
+            String key = uniqueKeySelector.getKey(record);
             recordState.remove(key);
         }
 
         public Integer getRecordAssociations(RowData record) throws Exception {
-            var recordWithAssociations = recordState.get(getUniqueKey(record));
+            var recordWithAssociations = recordState.get(uniqueKeySelector.getKey(record));
             if (recordWithAssociations == null) {
                 return 0;
             } else {
@@ -364,11 +370,6 @@ public final class MultiJoinStateHandlers {
         public Iterator<Tuple2<RowData, Integer>> getRecordsAndNumOfAssociations()
                 throws Exception {
             return recordState.values().iterator();
-        }
-
-        private static int getUniqueKey(RowData record) {
-            int key = Integer.parseInt(record.getString(1).toString());
-            return key;
         }
 
         private static final class RecordsIterable implements IterableIterator<RowData> {

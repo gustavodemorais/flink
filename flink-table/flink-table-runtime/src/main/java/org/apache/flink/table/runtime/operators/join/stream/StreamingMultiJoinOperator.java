@@ -4,6 +4,7 @@ import org.apache.calcite.rel.core.JoinRelType; // todo gustavo I probably shoul
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.typeinfo.Types;
+import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.streaming.api.operators.AbstractInput;
 import org.apache.flink.streaming.api.operators.AbstractStreamOperatorV2;
@@ -57,6 +58,8 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
     private transient TimestampedCollector<RowData> collector;
     private transient List<RowData> nullRows;
 
+    // TODO gustavo get rid
+    private final List<KeySelector<RowData, String>> dummyKeySelectors;
     /**
      * Constructor that supports binary join conditions, a multi-way join condition, and outer join conditions.
      * If multiJoinCondition is provided, it will be used instead of binary join conditions.
@@ -65,6 +68,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             StreamOperatorParameters<RowData> parameters,
             List<InternalTypeInfo<RowData>> inputTypes,
             List<JoinInputSideSpec> inputSpecs,
+            List<KeySelector<RowData, String>> dummyKeySelectors,
             List<JoinRelType> joinTypes,
             List<JoinCondition> joinConditions,
             MultiJoinCondition multiJoinCondition,
@@ -75,6 +79,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         super(parameters, inputSpecs.size());
         this.inputTypes = inputTypes;
         this.inputSpecs = inputSpecs;
+        this.dummyKeySelectors = dummyKeySelectors;
         this.joinTypes = joinTypes;
         this.joinConditions = joinConditions;
         this.multiJoinCondition = multiJoinCondition;
@@ -113,6 +118,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
                         new MultiOuterJoinStateHandler(
                                 i,
                                 this,
+                                dummyKeySelectors.get(i),
                                 this.stateHandler,
                                 getOperatorConfig().getConfiguration(),
                                 getUserCodeClassloader(),
@@ -125,6 +131,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
                         new MultiJoinHasUniqueKeyStateHandler(
                                 i,
                                 this,
+                                dummyKeySelectors.get(i),
                                 this.stateHandler,
                                 getOperatorConfig().getConfiguration(),
                                 getUserCodeClassloader(),

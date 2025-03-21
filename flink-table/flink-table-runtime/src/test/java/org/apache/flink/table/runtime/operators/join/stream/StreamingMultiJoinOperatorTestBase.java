@@ -38,7 +38,9 @@ public abstract class StreamingMultiJoinOperatorTestBase {
 
     protected final InternalTypeInfo<RowData> joinKeyTypeInfo;
     protected RowDataHarnessAssertor assertor;
-    protected KeyedMultiInputStreamOperatorTestHarness<Integer, RowData> testHarness;
+    protected KeyedMultiInputStreamOperatorTestHarness<String, RowData> testHarness;
+
+    protected List<KeySelector<RowData, String>> dummyKeySelectors;
 
     protected StreamingMultiJoinOperatorTestBase(int numInputs, List<JoinRelType> joinTypes, boolean isFullOuterJoin) {
         // Initialize collections
@@ -63,26 +65,30 @@ public abstract class StreamingMultiJoinOperatorTestBase {
 
         // Join key type (assuming common key type across all inputs)
         this.joinKeyTypeInfo = InternalTypeInfo.of(new CharType(false, 20));
+
+        // TODO Gustavo get rid of this
+        this.dummyKeySelectors = keySelectorsDummy();
     }
 
     protected InternalTypeInfo<RowData> createInputTypeInfo(int inputIndex) {
         return InternalTypeInfo.of(
                 RowType.of(
                         new LogicalType[] {
-                            new CharType(false, 20),
-                            new CharType(false, 20),
-                            VarCharType.STRING_TYPE
+                                new CharType(false, 20),
+                                new CharType(false, 20),
+                                VarCharType.STRING_TYPE
                         },
                         new String[] {
-                            String.format("id_%d", inputIndex),
-                            String.format("key_%d", inputIndex),
-                            String.format("payload_%d", inputIndex)
+                                String.format("user_id_%d", inputIndex),
+                                String.format("id_%d", inputIndex),
+                                String.format("details_%d", inputIndex)
                         }));
     }
 
+    // TODO Gustavo not used yet but will be soon for the test base the 0 has to be replaced by the correct index 0 or 1 for each table
     protected RowDataKeySelector createKeySelector(int inputIndex) {
         return HandwrittenSelectorUtil.getRowDataSelector(
-                new int[] {1}, // Assuming key is always second column
+                new int[] {0}, // Assuming key is always second column
                 inputTypeInfos
                         .get(inputIndex)
                         .toRowType()
@@ -93,7 +99,7 @@ public abstract class StreamingMultiJoinOperatorTestBase {
     @BeforeEach
     void beforeEach() throws Exception {
         testHarness = createTestHarness();
-        setupKeySelectors(testHarness);
+        setupKeySelectorsForTestHarness(testHarness);
         testHarness.setup();
         testHarness.open();
         assertor =
@@ -126,16 +132,19 @@ public abstract class StreamingMultiJoinOperatorTestBase {
             extends AbstractStreamOperatorFactory<RowData> {
 
         private final List<JoinInputSideSpec> inputSpecs;
+        private final List<KeySelector<RowData, String>> dummyKeySelectors;
         protected final List<InternalTypeInfo<RowData>> inputTypeInfos;
         private final List<JoinRelType> joinTypes;
         private final boolean isFullOuterJoin;
 
         public MultiStreamingJoinOperatorFactory(
                 List<JoinInputSideSpec> inputSpecs,
+                List<KeySelector<RowData, String>> dummyKeySelectors,
                 List<InternalTypeInfo<RowData>> inputTypeInfos,
                 List<JoinRelType> joinTypes,
                 boolean isFullOuterJoin) {
             this.inputSpecs = inputSpecs;
+            this.dummyKeySelectors = dummyKeySelectors;
             this.inputTypeInfos = inputTypeInfos;
             this.joinTypes = joinTypes;
             this.isFullOuterJoin = isFullOuterJoin;
@@ -145,7 +154,7 @@ public abstract class StreamingMultiJoinOperatorTestBase {
         public <T extends StreamOperator<RowData>> T createStreamOperator(
                 StreamOperatorParameters<RowData> parameters) {
             StreamingMultiJoinOperator op =
-                    createJoinOperator(parameters, inputSpecs, inputTypeInfos, joinTypes);
+                    createJoinOperator(parameters, inputSpecs, dummyKeySelectors, inputTypeInfos, joinTypes);
             return (T) op;
         }
 
@@ -158,6 +167,7 @@ public abstract class StreamingMultiJoinOperatorTestBase {
         protected StreamingMultiJoinOperator createJoinOperator(
                 StreamOperatorParameters<RowData> parameters,
                 List<JoinInputSideSpec> inputSpecs,
+                List<KeySelector<RowData, String>> dummyKeySelectors,
                 List<InternalTypeInfo<RowData>> inputTypeInfos,
                 List<JoinRelType> joinTypes) {
             // Create join conditions (for now just using a simple condition that always returns
@@ -226,6 +236,7 @@ public abstract class StreamingMultiJoinOperatorTestBase {
                     parameters,
                     inputTypeInfos,
                     inputSpecs,
+                    dummyKeySelectors,
                     joinTypes,
                     joinConditions,
                     multiJoinCondition,
@@ -246,10 +257,10 @@ public abstract class StreamingMultiJoinOperatorTestBase {
                             + "    @Override\n"
                             + "    public boolean apply(org.apache.flink.table.data.RowData in1, org.apache.flink.table.data.RowData in2) {\n"
                             + "        // Compare the key fields (second column, index 1)\n"
-                            + "        if (in1.isNullAt(1) || in2.isNullAt(1)) {\n"
+                            + "        if (in1.isNullAt(0) || in2.isNullAt(0)) {\n"
                             + "            return false;\n"
                             + "        }\n"
-                            + "        return in1.getString(1).toString().equals(in2.getString(1).toString());\n"
+                            + "        return in1.getString(0).toString().equals(in2.getString(0).toString());\n"
                             + "    }\n"
                             + "\n"
                             + "    @Override\n"
@@ -279,13 +290,13 @@ public abstract class StreamingMultiJoinOperatorTestBase {
                             + "        }\n"
                             + "\n"
                             + "        // Check for nulls in key columns\n"
-                            + "        if (inputs[0].isNullAt(1) || inputs[compareIndex].isNullAt(1)) {\n"
+                            + "        if (inputs[0].isNullAt(0) || inputs[compareIndex].isNullAt(0)) {\n"
                             + "            return false;\n"
                             + "        }\n"
                             + "\n"
                             + "        // Compare only input[compareIndex - 1 and] with inputs[compareIndex]\n"
-                            + "        String firstKey = inputs[compareIndex - 1].getString(1).toString();\n"
-                            + "        String secondKey = inputs[compareIndex].getString(1).toString();\n"
+                            + "        String firstKey = inputs[compareIndex - 1].getString(0).toString();\n"
+                            + "        String secondKey = inputs[compareIndex].getString(0).toString();\n"
                             + "        return firstKey.equals(secondKey);\n"
                             + "    }\n"
                             + "\n"
@@ -318,17 +329,17 @@ public abstract class StreamingMultiJoinOperatorTestBase {
                             + "\n"
                             + "        // First, check for nulls\n"
                             + "        for (org.apache.flink.table.data.RowData input : inputs) {\n"
-                            + "            if (input == null || input.isNullAt(1)) {\n"
+                            + "            if (input == null || input.isNullAt(0)) {\n"
                             + "                return false;\n"
                             + "            }\n"
                             + "        }\n"
                             + "\n"
                             + "        // Get the first key as reference\n"
-                            + "        String referenceKey = inputs[0].getString(1).toString();\n"
+                            + "        String referenceKey = inputs[0].getString(0).toString();\n"
                             + "\n"
                             + "        // Check if all keys match the reference\n"
                             + "        for (int i = 1; i < inputs.length; i++) {\n"
-                            + "            String currentKey = inputs[i].getString(1).toString();\n"
+                            + "            String currentKey = inputs[i].getString(0).toString();\n"
                             + "            if (!referenceKey.equals(currentKey)) {\n"
                             + "                return false;\n"
                             + "            }\n"
@@ -347,19 +358,36 @@ public abstract class StreamingMultiJoinOperatorTestBase {
         }
     }
 
-    private void setupKeySelectors(
-            KeyedMultiInputStreamOperatorTestHarness<Integer, RowData> harness) {
+    private void setupKeySelectorsForTestHarness(
+            KeyedMultiInputStreamOperatorTestHarness<String, RowData> harness) {
         for (int i = 0; i < this.inputSpecs.size(); i++) {
-            KeySelector<RowData, Integer> keySelector =
-                    row -> Integer.parseInt(row.getString(1).toString());
+            // TODO Gustavo The key selector for the state has to be always 0
+            // Because we want to all arrows associated with the id 0
+
+            // this is used to partition state, figure out how to do it properly
+            // we need one per input? hm idk
+            KeySelector<RowData, String> keySelector =
+                    row -> row.getString(0).toString();
             harness.setKeySelector(i, keySelector);
         }
     }
 
-    protected KeyedMultiInputStreamOperatorTestHarness<Integer, RowData> createTestHarness()
+    private List<KeySelector<RowData, String>> keySelectorsDummy() {
+        List<KeySelector<RowData, String>> hardKeySelectors = new ArrayList<>();
+        for (int i = 0; i < this.inputSpecs.size(); i++) {
+            // TODO gustavo hard coded key - 0 for the orders table and 1 for the other ones
+            var keyIndex = i == 0 ? 0 : 1;
+            KeySelector<RowData, String> keySelector =
+                    row -> row.getString(keyIndex).toString();
+            hardKeySelectors.add(keySelector);
+        }
+        return hardKeySelectors;
+    }
+
+    protected KeyedMultiInputStreamOperatorTestHarness<String, RowData> createTestHarness()
             throws Exception {
         return new KeyedMultiInputStreamOperatorTestHarness<>(
-                new MultiStreamingJoinOperatorFactory(inputSpecs, inputTypeInfos, joinTypes, isFullOuterJoin),
-                TypeInformation.of(Integer.class));
+                new MultiStreamingJoinOperatorFactory(inputSpecs, dummyKeySelectors, inputTypeInfos, joinTypes, isFullOuterJoin),
+                TypeInformation.of(String.class));
     }
 }
