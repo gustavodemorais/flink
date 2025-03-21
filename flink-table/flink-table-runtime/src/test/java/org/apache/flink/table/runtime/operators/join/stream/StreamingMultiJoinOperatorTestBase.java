@@ -22,12 +22,15 @@ import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.table.types.logical.VarCharType;
 import org.apache.flink.table.utils.HandwrittenSelectorUtil;
+import org.apache.flink.types.RowKind;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+
+// Add constants for RowKind values to improve readability
 
 public abstract class StreamingMultiJoinOperatorTestBase {
 
@@ -42,6 +45,12 @@ public abstract class StreamingMultiJoinOperatorTestBase {
     protected KeyedMultiInputStreamOperatorTestHarness<String, RowData> testHarness;
 
     protected List<KeySelector<RowData, String>> dummyKeySelectors;
+
+    // Define commonly used RowKind constants to make the test code more readable
+    protected static final RowKind INSERT = RowKind.INSERT;
+    protected static final RowKind UPDATE_BEFORE = RowKind.UPDATE_BEFORE;
+    protected static final RowKind UPDATE_AFTER = RowKind.UPDATE_AFTER;
+    protected static final RowKind DELETE = RowKind.DELETE;
 
     protected StreamingMultiJoinOperatorTestBase(int numInputs, List<JoinRelType> joinTypes, boolean isFullOuterJoin) {
         // Initialize collections
@@ -71,7 +80,162 @@ public abstract class StreamingMultiJoinOperatorTestBase {
         this.dummyKeySelectors = keySelectorsDummy();
     }
 
+    // Assertion helper methods
+    
+    /**
+     * Assert that one row is emitted with the given kind and field values.
+     */
+    protected void emits(RowKind kind, String... fields) throws Exception {
+        assertor.shouldEmit(testHarness, rowOfKind(kind, fields));
+    }
 
+    /**
+     * Assert that no rows are emitted.
+     */
+    protected void emitsNothing() throws Exception {
+        assertor.shouldEmitNothing(testHarness);
+    }
+
+    /**
+     * Assert that two rows are emitted with the given kinds and field values.
+     */
+    protected void emits(RowKind kind1, String[] fields1, RowKind kind2, String[] fields2) throws Exception {
+        assertor.shouldEmit(
+                testHarness, 
+                rowOfKind(kind1, fields1),
+                rowOfKind(kind2, fields2));
+    }
+
+    /**
+     * Assert that two rows are emitted with varargs field values.
+     * Example: emits(DELETE, "1", "user1", "details1", null, null, null,
+     *               INSERT, "1", "user1", "details1", "1", "order1", "orderDetails1")
+     */
+    /*protected void emits(RowKind kind1, String... fieldsWithKind2) throws Exception {
+        // Find the boundary between fields for first row and the second row kind
+        int i = 0;
+        while (i < fieldsWithKind2.length) {
+            if (fieldsWithKind2[i] instanceof String && 
+                    (fieldsWithKind2[i].equals("INSERT") || 
+                     fieldsWithKind2[i].equals("UPDATE_BEFORE") || 
+                     fieldsWithKind2[i].equals("UPDATE_AFTER") || 
+                     fieldsWithKind2[i].equals("DELETE"))) {
+                break;
+            }
+            i++;
+        }
+        
+        // If we reached the end, there's only one row
+        if (i >= fieldsWithKind2.length) {
+            emits(kind1, fieldsWithKind2);
+            return;
+        }
+        
+        // Extract fields for first row
+        String[] fields1 = Arrays.copyOfRange(fieldsWithKind2, 0, i);
+        
+        // Extract kind for second row
+        RowKind kind2;
+        switch (fieldsWithKind2[i]) {
+            case "INSERT": kind2 = RowKind.INSERT; break;
+            case "UPDATE_BEFORE": kind2 = RowKind.UPDATE_BEFORE; break;
+            case "UPDATE_AFTER": kind2 = RowKind.UPDATE_AFTER; break;
+            case "DELETE": kind2 = RowKind.DELETE; break;
+            default: throw new IllegalArgumentException("Invalid row kind: " + fieldsWithKind2[i]);
+        }
+        
+        // Extract fields for second row
+        String[] fields2 = Arrays.copyOfRange(fieldsWithKind2, i + 1, fieldsWithKind2.length);
+        
+        assertor.shouldEmit(
+                testHarness,
+                rowOfKind(kind1, fields1),
+                rowOfKind(kind2, fields2));
+    }*/
+
+    /**
+     * Helper method to create a StreamRecord with the given kind and fields.
+     */
+    protected RowData rowOfKind(
+            RowKind kind, String... fields) {
+        return StreamRecordUtils.rowOfKind(kind, fields);
+    }
+
+    // Helper methods for inserting records
+    protected void insertUser(String userId, String userName, String details) throws Exception {
+        testHarness.processElement(0, StreamRecordUtils.insertRecord(userId, userName, details));
+    }
+
+    protected void insertOrder(String userId, String orderId, String details) throws Exception {
+        testHarness.processElement(1, StreamRecordUtils.insertRecord(userId, orderId, details));
+    }
+
+    protected void insertPayment(String userId, String paymentId, String details) throws Exception {
+        testHarness.processElement(2, StreamRecordUtils.insertRecord(userId, paymentId, details));
+    }
+
+    // Helper methods for updating records - with before AND after
+    protected void updateBeforeUser(String userId, String userName, String details) throws Exception {
+        testHarness.processElement(0, StreamRecordUtils.updateBeforeRecord(userId, userName, details));
+    }
+
+    protected void updateAfterUser(String userId, String userName, String details) throws Exception {
+        testHarness.processElement(0, StreamRecordUtils.updateAfterRecord(userId, userName, details));
+    }
+
+    protected void updateBeforeOrder(String userId, String orderId, String details) throws Exception {
+        testHarness.processElement(1, StreamRecordUtils.updateBeforeRecord(userId, orderId, details));
+    }
+
+    protected void updateAfterOrder(String userId, String orderId, String details) throws Exception {
+        testHarness.processElement(1, StreamRecordUtils.updateAfterRecord(userId, orderId, details));
+    }
+
+    protected void updateBeforePayment(String userId, String paymentId, String details) throws Exception {
+        testHarness.processElement(2, StreamRecordUtils.updateBeforeRecord(userId, paymentId, details));
+    }
+
+    protected void updateAfterPayment(String userId, String paymentId, String details) throws Exception {
+        testHarness.processElement(2, StreamRecordUtils.updateAfterRecord(userId, paymentId, details));
+    }
+
+    // Helper methods for deleting records
+    protected void deleteUser(String userId, String userName, String details) throws Exception {
+        testHarness.processElement(0, StreamRecordUtils.deleteRecord(userId, userName, details));
+    }
+
+    protected void deleteOrder(String userId, String orderId, String details) throws Exception {
+        testHarness.processElement(1, StreamRecordUtils.deleteRecord(userId, orderId, details));
+    }
+
+    protected void deletePayment(String userId, String paymentId, String details) throws Exception {
+        testHarness.processElement(2, StreamRecordUtils.deleteRecord(userId, paymentId, details));
+    }
+
+    // Generic helper methods for dynamic input index
+    protected void insertRecord(int inputIndex, String... fields) throws Exception {
+        testHarness.processElement(inputIndex, StreamRecordUtils.insertRecord(fields));
+    }
+
+    protected void updateBeforeRecord(int inputIndex, String... fields) throws Exception {
+        testHarness.processElement(inputIndex, StreamRecordUtils.updateBeforeRecord(fields));
+    }
+
+    protected void updateAfterRecord(int inputIndex, String... fields) throws Exception {
+        testHarness.processElement(inputIndex, StreamRecordUtils.updateAfterRecord(fields));
+    }
+
+    protected void deleteRecord(int inputIndex, String... fields) throws Exception {
+        testHarness.processElement(inputIndex, StreamRecordUtils.deleteRecord(fields));
+    }
+
+    /**
+     * Helper method to create a collection of field values for multi-row assertions.
+     * This improves readability when using the emits() method with multiple rows.
+     */
+    protected String[] r(String... values) {
+        return values;
+    }
 
     protected InternalTypeInfo<RowData> createInputTypeInfo(int inputIndex) {
         return InternalTypeInfo.of(
@@ -392,73 +556,5 @@ public abstract class StreamingMultiJoinOperatorTestBase {
         return new KeyedMultiInputStreamOperatorTestHarness<>(
                 new MultiStreamingJoinOperatorFactory(inputSpecs, dummyKeySelectors, inputTypeInfos, joinTypes, isFullOuterJoin),
                 TypeInformation.of(String.class));
-    }
-
-    // Helper methods for inserting records
-    protected void insertUser(String userId, String userName, String details) throws Exception {
-        testHarness.processElement(0, StreamRecordUtils.insertRecord(userId, userName, details));
-    }
-
-    protected void insertOrder(String userId, String orderId, String details) throws Exception {
-        testHarness.processElement(1, StreamRecordUtils.insertRecord(userId, orderId, details));
-    }
-
-    protected void insertPayment(String userId, String paymentId, String details) throws Exception {
-        testHarness.processElement(2, StreamRecordUtils.insertRecord(userId, paymentId, details));
-    }
-
-    // Helper methods for updating records - with before AND after
-    protected void updateBeforeUser(String userId, String userName, String details) throws Exception {
-        testHarness.processElement(0, StreamRecordUtils.updateBeforeRecord(userId, userName, details));
-    }
-
-    protected void updateAfterUser(String userId, String userName, String details) throws Exception {
-        testHarness.processElement(0, StreamRecordUtils.updateAfterRecord(userId, userName, details));
-    }
-
-    protected void updateBeforeOrder(String userId, String orderId, String details) throws Exception {
-        testHarness.processElement(1, StreamRecordUtils.updateBeforeRecord(userId, orderId, details));
-    }
-
-    protected void updateAfterOrder(String userId, String orderId, String details) throws Exception {
-        testHarness.processElement(1, StreamRecordUtils.updateAfterRecord(userId, orderId, details));
-    }
-
-    protected void updateBeforePayment(String userId, String paymentId, String details) throws Exception {
-        testHarness.processElement(2, StreamRecordUtils.updateBeforeRecord(userId, paymentId, details));
-    }
-
-    protected void updateAfterPayment(String userId, String paymentId, String details) throws Exception {
-        testHarness.processElement(2, StreamRecordUtils.updateAfterRecord(userId, paymentId, details));
-    }
-
-    // Helper methods for deleting records
-    protected void deleteUser(String userId, String userName, String details) throws Exception {
-        testHarness.processElement(0, StreamRecordUtils.deleteRecord(userId, userName, details));
-    }
-
-    protected void deleteOrder(String userId, String orderId, String details) throws Exception {
-        testHarness.processElement(1, StreamRecordUtils.deleteRecord(userId, orderId, details));
-    }
-
-    protected void deletePayment(String userId, String paymentId, String details) throws Exception {
-        testHarness.processElement(2, StreamRecordUtils.deleteRecord(userId, paymentId, details));
-    }
-
-    // Generic helper methods for dynamic input index
-    protected void insertRecord(int inputIndex, String... fields) throws Exception {
-        testHarness.processElement(inputIndex, StreamRecordUtils.insertRecord(fields));
-    }
-
-    protected void updateBeforeRecord(int inputIndex, String... fields) throws Exception {
-        testHarness.processElement(inputIndex, StreamRecordUtils.updateBeforeRecord(fields));
-    }
-
-    protected void updateAfterRecord(int inputIndex, String... fields) throws Exception {
-        testHarness.processElement(inputIndex, StreamRecordUtils.updateAfterRecord(fields));
-    }
-
-    protected void deleteRecord(int inputIndex, String... fields) throws Exception {
-        testHarness.processElement(inputIndex, StreamRecordUtils.deleteRecord(fields));
     }
 }

@@ -1,12 +1,15 @@
 package org.apache.flink.table.runtime.operators.join.stream;
 
 import static org.apache.flink.table.runtime.util.StreamRecordUtils.*;
+import static org.apache.flink.types.RowKind.DELETE;
+import static org.apache.flink.types.RowKind.INSERT;
+import static org.apache.flink.types.RowKind.UPDATE_AFTER;
+import static org.apache.flink.types.RowKind.UPDATE_BEFORE;
 
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.flink.testutils.junit.extensions.parameterized.Parameter;
 import org.apache.flink.testutils.junit.extensions.parameterized.ParameterizedTestExtension;
 import org.apache.flink.testutils.junit.extensions.parameterized.Parameters;
-import org.apache.flink.types.RowKind;
 import org.junit.jupiter.api.TestTemplate;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -28,104 +31,66 @@ class StreamingTwoWayInnerMultiJoinOperatorTest extends StreamingMultiJoinOperat
         super(2, List.of(JoinRelType.INNER, JoinRelType.INNER), false);
     }
 
+    /**
+     * SELECT u.*, o.*
+     * FROM Users u
+     * INNER JOIN Orders o ON u.id = o.user_id
+     */
     @TestTemplate
     void testTwoWayInnerJoin() throws Exception {
-        // Add a user record with key "1"
+        /* -------- APPEND TESTS ----------- */
+        
+        // Users without orders aren't emitted
         insertUser("1", "Gus", "User 1 Details");
+        emitsNothing();
 
-        // No output yet since we haven't received matching record from second input
-        assertor.shouldEmitNothing(testHarness);
-
-        // Add an order with matching key "1"
+        // User joins with matching order
         insertOrder("1", "order_1", "Order 1 Details");
+        emits(INSERT, "1", "Gus", "User 1 Details", "1", "order_1", "Order 1 Details");
 
-        // Should emit joined record since keys match
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.INSERT,
-                        "1", "Gus", "User 1 Details",
-                        "1", "order_1", "Order 1 Details"));
-
-        // Add an order with non-matching key "2"
+        // Orders without users aren't emitted
         insertOrder("2", "order_2", "Order 2 Details");
+        emitsNothing();
 
-        // Should not emit since keys don't match
-        assertor.shouldEmitNothing(testHarness);
-
-        // Add matching user record for key "2"
+        // Adding matching user triggers join
         insertUser("2", "Bob", "User 2 Details");
-
-        // Should emit joined record for key "2"
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.INSERT,
-                        "2", "Bob", "User 2 Details",
-                        "2", "order_2", "Order 2 Details"));
+        emits(INSERT, "2", "Bob", "User 2 Details", "2", "order_2", "Order 2 Details");
     }
 
+    /**
+     * SELECT u.*, o.*
+     * FROM Users u
+     * INNER JOIN Orders o ON u.id = o.user_id
+     * -- Test updates and deletes on both sides
+     */
     @TestTemplate
     void testTwoWayInnerJoinUpdating() throws Exception {
-        // Setup initial data
+        /* -------- SETUP BASE DATA ----------- */
         insertUser("1", "Gus", "User 1 Details");
+        emitsNothing();
         
-        // No output yet since we haven't received matching record from second input
-        assertor.shouldEmitNothing(testHarness);
-
         insertOrder("1", "order_1", "Order 1 Details");
+        emits(INSERT, "1", "Gus", "User 1 Details", "1", "order_1", "Order 1 Details");
+
+        /* -------- UPDATE TESTS ----------- */
         
-        // Should emit joined record since keys match
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.INSERT,
-                        "1", "Gus", "User 1 Details",
-                        "1", "order_1", "Order 1 Details"));
-
-        // Update user details
+        // +U on user.details emits +U
         updateAfterUser("1", "Gus", "User 1 Details Updated");
+        emits(UPDATE_AFTER, "1", "Gus", "User 1 Details Updated", "1", "order_1", "Order 1 Details");
 
-        // Should emit updated joined record
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.UPDATE_AFTER,
-                        "1", "Gus", "User 1 Details Updated",
-                        "1", "order_1", "Order 1 Details"));
-
-        // Update order details
+        // +U on order.details emits +U
         updateAfterOrder("1", "order_1", "Order 1 Details Updated");
+        emits(UPDATE_AFTER, "1", "Gus", "User 1 Details Updated", "1", "order_1", "Order 1 Details Updated");
 
-        // Should emit updated joined record
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.UPDATE_AFTER,
-                        "1", "Gus", "User 1 Details Updated",
-                        "1", "order_1", "Order 1 Details Updated"));
-
-        // Delete the order record for key 1, which should generate a deletion for the join
+        /* -------- DELETE TESTS ----------- */
+        
+        // -D on order emits -D
         deleteOrder("1", "order_1", "Order 1 Details Updated");
+        emits(DELETE, "1", "Gus", "User 1 Details Updated", "1", "order_1", "Order 1 Details Updated");
 
-        // Should emit a delete for the old join result
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.DELETE,
-                        "1", "Gus", "User 1 Details Updated",
-                        "1", "order_1", "Order 1 Details Updated"));
-
-        // Add a matching order record back for key "1"
+        // Re-insert order emits +I
         insertOrder("1", "order_1", "Order 1 New Details");
-
-        // Should emit joined record for key "1"
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.INSERT,
-                        "1", "Gus", "User 1 Details Updated",
-                        "1", "order_1", "Order 1 New Details"));
+        emits(INSERT, "1", "Gus", "User 1 Details Updated", "1", "order_1", "Order 1 New Details");
     }
 }
 
@@ -144,201 +109,103 @@ class StreamingTwoWayOuterMultiJoinOperatorTest extends StreamingMultiJoinOperat
         super(2, List.of(JoinRelType.INNER, JoinRelType.LEFT), false);
     }
 
+    /**
+     * SELECT u.*, o.*
+     * FROM Users u
+     * LEFT OUTER JOIN Orders o ON u.id = o.user_id
+     * -- Test left outer join behavior with nulls and transitions
+     */
     @TestTemplate
     void testTwoWayLeftOuterJoin() throws Exception {
-        // Add a user record with key "1"
+        /* -------- LEFT OUTER JOIN APPEND TESTS ----------- */
+        
+        // Left table row always emits, even without matching right row
         insertUser("1", "Gus", "User 1 Details");
+        emits(INSERT, "1", "Gus", "User 1 Details", null, null, null);
 
-        // Should emit joined record with null values for right side (for left outer join)
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.INSERT,
-                        "1", "Gus", "User 1 Details",
-                        null, null, null));
-
-        // Add an order record with key "2" that has no match in first input
+        // Right-only record not emitted (LEFT join)
         insertOrder("2", "order_2", "Order 2 Details");
+        emitsNothing();
 
-        // Should not emit anything for right-only record since this is a LEFT join
-        assertor.shouldEmitNothing(testHarness);
-
-        // Add an order record with matching key "1"
+        /* -------- MATCH/UNMATCH TRANSITIONS ----------- */
+        
+        // Add matching order - deletes null result, emits joined
         insertOrder("1", "order_1", "Order 1 Details");
+        emits(
+                DELETE, r("1", "Gus", "User 1 Details", null, null, null),
+                INSERT, r("1", "Gus", "User 1 Details", "1", "order_1", "Order 1 Details"));
 
-        // Should emit an update to the previous left outer join result
-        // First delete the old record with nulls and then emit the joined record
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(RowKind.DELETE, "1", "Gus", "User 1 Details", null, null, null),
-                rowOfKind(
-                        RowKind.INSERT,
-                        "1", "Gus", "User 1 Details",
-                        "1", "order_1", "Order 1 Details"));
-
-        // Delete order 1
+        // Delete order - reverts to left outer join result
         deleteOrder("1", "order_1", "Order 1 Details");
+        emits(
+                DELETE, r("1", "Gus", "User 1 Details", "1", "order_1", "Order 1 Details"),
+                INSERT, r("1", "Gus", "User 1 Details", null, null, null));
 
-        // Should revert to left outer join result with nulls for the right side
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.DELETE,
-                        "1", "Gus", "User 1 Details",
-                        "1", "order_1", "Order 1 Details"),
-                rowOfKind(
-                        RowKind.INSERT,
-                        "1", "Gus", "User 1 Details",
-                        null, null, null));
-
-        // Add order back
+        // Re-add order - transitions back to inner join
         insertOrder("1", "order_1", "Order 1 Details");
+        emits(
+                DELETE, r("1", "Gus", "User 1 Details", null, null, null),
+                INSERT, r("1", "Gus", "User 1 Details", "1", "order_1", "Order 1 Details"));
 
-        // Join output should be restored
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(RowKind.DELETE, "1", "Gus", "User 1 Details", null, null, null),
-                rowOfKind(
-                        RowKind.INSERT,
-                        "1", "Gus", "User 1 Details",
-                        "1", "order_1", "Order 1 Details"));
-
-        // Delete user 1
+        /* -------- USER DELETE/REINSERT TESTS ----------- */
+        
+        // Delete left record removes entire result
         deleteUser("1", "Gus", "User 1 Details");
+        emits(DELETE, "1", "Gus", "User 1 Details", "1", "order_1", "Order 1 Details");
 
-        // Should delete the join result since there's no left record
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.DELETE,
-                        "1", "Gus", "User 1 Details",
-                        "1", "order_1", "Order 1 Details"));
-
-        // Add user back
+        // Re-add user restores join
         insertUser("1", "Gus", "User 1 Details");
+        emits(INSERT, "1", "Gus", "User 1 Details", "1", "order_1", "Order 1 Details");
 
-        // Join output should be restored
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.INSERT,
-                        "1", "Gus", "User 1 Details",
-                        "1", "order_1", "Order 1 Details"));
-
-        // Update user with before record
+        /* -------- USER UPDATE TESTS ----------- */
+        
+        // -U on user emits -U
         updateBeforeUser("1", "Gus", "User 1 Details");
+        emits(UPDATE_BEFORE, "1", "Gus", "User 1 Details", "1", "order_1", "Order 1 Details");
 
-        // Should emit before update
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.UPDATE_BEFORE,
-                        "1", "Gus", "User 1 Details",
-                        "1", "order_1", "Order 1 Details"));
-
-        // Update user with after record
+        // +U on user emits +U
         updateAfterUser("1", "Gus", "User 1 Details Updated");
-        
-        // Should emit after update
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.UPDATE_AFTER,
-                        "1", "Gus", "User 1 Details Updated",
-                        "1", "order_1", "Order 1 Details"));
+        emits(UPDATE_AFTER, "1", "Gus", "User 1 Details Updated", "1", "order_1", "Order 1 Details");
 
-        // Update user again with only after record
+        // Another +U on user
         updateAfterUser("1", "Gus", "User 1 Details Updated 2");
-        
-        // Should emit after update
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.UPDATE_AFTER,
-                        "1", "Gus", "User 1 Details Updated 2",
-                        "1", "order_1", "Order 1 Details"));
+        emits(UPDATE_AFTER, "1", "Gus", "User 1 Details Updated 2", "1", "order_1", "Order 1 Details");
 
-        // Update order with before record
+        /* -------- ORDER UPDATE TESTS ----------- */
+        
+        // -U on order emits -U and temporarily reverts to left outer
         updateBeforeOrder("1", "order_1", "Order 1 Details");
+        emits(
+                UPDATE_BEFORE, r("1", "Gus", "User 1 Details Updated 2", "1", "order_1", "Order 1 Details"),
+                INSERT, r("1", "Gus", "User 1 Details Updated 2", null, null, null));
 
-        // Should emit before update and insert null placeholders
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.UPDATE_BEFORE,
-                        "1", "Gus", "User 1 Details Updated 2",
-                        "1", "order_1", "Order 1 Details"),
-                rowOfKind(
-                        RowKind.INSERT,
-                        "1", "Gus", "User 1 Details Updated 2",
-                        null, null, null));
-
-        // Update order with after record
+        // +U on order removes null result and emits join
         updateAfterOrder("1", "order_1", "Order 1 Details Updated");
-        
-        // Should delete null placeholders and emit update
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.DELETE,
-                        "1", "Gus", "User 1 Details Updated 2",
-                        null, null, null),
-                rowOfKind(
-                        RowKind.UPDATE_AFTER,
-                        "1", "Gus", "User 1 Details Updated 2",
-                        "1", "order_1", "Order 1 Details Updated"));
+        emits(
+                DELETE, r("1", "Gus", "User 1 Details Updated 2", null, null, null),
+                UPDATE_AFTER, r("1", "Gus", "User 1 Details Updated 2", "1", "order_1", "Order 1 Details Updated"));
 
-        // Update order again with only after record
+        // Another +U on order
         updateAfterOrder("1", "order_1", "Order 1 Details Updated 2");
+        emits(UPDATE_AFTER, "1", "Gus", "User 1 Details Updated 2", "1", "order_1", "Order 1 Details Updated 2");
+
+        /* -------- MULTI-ROW TESTS ----------- */
         
-        // Should emit after update
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.UPDATE_AFTER,
-                        "1", "Gus", "User 1 Details Updated 2",
-                        "1", "order_1", "Order 1 Details Updated 2"));
-
-        // Add a second order for the same user
+        // Adding second order for same user
         insertOrder("1", "order_2", "Order 2 Details");
+        emits(INSERT, "1", "Gus", "User 1 Details Updated 2", "1", "order_2", "Order 2 Details");
 
-        // Should emit additional join result
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.INSERT,
-                        "1", "Gus", "User 1 Details Updated 2",
-                        "1", "order_2", "Order 2 Details"));
-
-        // Delete user who has multiple matching orders
+        // Delete user with multiple orders deletes all join results
         deleteUser("1", "Gus", "User 1 Details Updated 2");
+        emits(
+                DELETE, r("1", "Gus", "User 1 Details Updated 2", "1", "order_1", "Order 1 Details Updated 2"),
+                DELETE, r("1", "Gus", "User 1 Details Updated 2", "1", "order_2", "Order 2 Details"));
 
-        // Should emit deletes for all join results
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.DELETE,
-                        "1", "Gus", "User 1 Details Updated 2",
-                        "1", "order_1", "Order 1 Details Updated 2"),
-                rowOfKind(
-                        RowKind.DELETE,
-                        "1", "Gus", "User 1 Details Updated 2",
-                        "1", "order_2", "Order 2 Details"));
-
-        // Add a new user with same key but different name
-        insertUser("1", "Charlie", "User 3 Details");
-
-        // Should emit join results for both orders
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.INSERT,
-                        "1", "Charlie", "User 3 Details",
-                        "1", "order_1", "Order 1 Details Updated 2"),
-                rowOfKind(
-                        RowKind.INSERT,
-                        "1", "Charlie", "User 3 Details",
-                        "1", "order_2", "Order 2 Details"));
+        // New user with same key joins with both orders
+        insertUser("1", "Dawid", "User 3 Details");
+        emits(
+                INSERT, r("1", "Dawid", "User 3 Details", "1", "order_1", "Order 1 Details Updated 2"),
+                INSERT, r("1", "Dawid", "User 3 Details", "1", "order_2", "Order 2 Details"));
     }
 }
 
@@ -357,163 +224,115 @@ class StreamingThreeWayJoinOperatorTest extends StreamingMultiJoinOperatorTestBa
         super(3, List.of(JoinRelType.INNER, JoinRelType.INNER, JoinRelType.INNER), false);
     }
 
+    /**
+     * SELECT u.*, o.*, p.*
+     * FROM Users u
+     * INNER JOIN Orders o ON u.id = o.user_id
+     * INNER JOIN Payments p ON u.id = p.user_id
+     * -- Test three-way inner join with append-only data
+     */
     @TestTemplate
     void testThreeWayInnerJoin() throws Exception {
-        // Add a user record with key "1"
+        /* -------- THREE-WAY JOIN APPEND TESTS ----------- */
+        
+        // First table alone doesn't emit
         insertUser("1", "Gus", "User 1 Details");
+        emitsNothing();
 
-        // No output yet since we haven't received matching records from other inputs
-        assertor.shouldEmitNothing(testHarness);
-
-        // Add an order with matching key "1"
+        // First two tables don't emit
         insertOrder("1", "order_1", "Order 1 Details");
+        emitsNothing();
 
-        // Still no output - need all three inputs to match
-        assertor.shouldEmitNothing(testHarness);
-
-        // Add a payment with matching key "1"
+        // All three tables match emits join
         insertPayment("1", "payment_1", "Payment 1 Details");
+        emits(INSERT, "1", "Gus", "User 1 Details", 
+                     "1", "order_1", "Order 1 Details",
+                     "1", "payment_1", "Payment 1 Details");
 
-        // Should emit joined record since all three keys match
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.INSERT,
-                        "1", "Gus", "User 1 Details",
-                        "1", "order_1", "Order 1 Details",
-                        "1", "payment_1", "Payment 1 Details"));
-
-        // Test with another set of records with key "2"
+        // Testing with second set of records
         insertUser("2", "Bob", "User 2 Details");
         insertOrder("2", "order_2", "Order 2 Details");
-
-        // No output yet - need all three inputs to match
-        assertor.shouldEmitNothing(testHarness);
+        emitsNothing();
 
         insertPayment("2", "payment_2", "Payment 2 Details");
-
-        // Should emit joined record for key "2"
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.INSERT,
-                        "2", "Bob", "User 2 Details",
-                        "2", "order_2", "Order 2 Details",
-                        "2", "payment_2", "Payment 2 Details"));
+        emits(INSERT, "2", "Bob", "User 2 Details",
+                     "2", "order_2", "Order 2 Details",
+                     "2", "payment_2", "Payment 2 Details");
     }
 
+    /**
+     * SELECT u.*, o.*, p.*
+     * FROM Users u
+     * INNER JOIN Orders o ON u.id = o.user_id
+     * INNER JOIN Payments p ON u.id = p.user_id
+     * -- Test updates and deletes across all three tables
+     */
     @TestTemplate
     void testThreeWayInnerJoinUpdating() throws Exception {
-        // Set up three-way join
+        /* -------- SETUP BASE DATA ----------- */
+        
+        // Set up initial three-way join
         insertUser("1", "Gus", "User 1 Details");
         insertOrder("1", "order_1", "Order 1 Details");
         insertPayment("1", "payment_1", "Payment 1 Details");
+        emits(INSERT, "1", "Gus", "User 1 Details",
+                     "1", "order_1", "Order 1 Details",
+                     "1", "payment_1", "Payment 1 Details");
 
-        // Should emit joined record since all three keys match
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.INSERT,
-                        "1", "Gus", "User 1 Details",
-                        "1", "order_1", "Order 1 Details",
-                        "1", "payment_1", "Payment 1 Details"));
-
-        // Update user details
+        /* -------- UPDATE TESTS ----------- */
+        
+        // +U on user emits +U
         updateAfterUser("1", "Gus", "User 1 Details Updated");
+        emits(UPDATE_AFTER, "1", "Gus", "User 1 Details Updated",
+                          "1", "order_1", "Order 1 Details",
+                          "1", "payment_1", "Payment 1 Details");
 
-        // Should emit updated joined record
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.UPDATE_AFTER,
-                        "1", "Gus", "User 1 Details Updated",
-                        "1", "order_1", "Order 1 Details",
-                        "1", "payment_1", "Payment 1 Details"));
-
-        // Update order details
+        // +U on order emits +U
         updateAfterOrder("1", "order_1", "Order 1 Details Updated");
+        emits(UPDATE_AFTER, "1", "Gus", "User 1 Details Updated",
+                          "1", "order_1", "Order 1 Details Updated",
+                          "1", "payment_1", "Payment 1 Details");
 
-        // Should emit updated joined record
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.UPDATE_AFTER,
-                        "1", "Gus", "User 1 Details Updated",
-                        "1", "order_1", "Order 1 Details Updated",
-                        "1", "payment_1", "Payment 1 Details"));
-
-        // Update payment details
+        // +U on payment emits +U
         updateAfterPayment("1", "payment_1", "Payment 1 Details Updated");
+        emits(UPDATE_AFTER, "1", "Gus", "User 1 Details Updated",
+                          "1", "order_1", "Order 1 Details Updated",
+                          "1", "payment_1", "Payment 1 Details Updated");
 
-        // Should emit updated joined record
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.UPDATE_AFTER,
-                        "1", "Gus", "User 1 Details Updated",
-                        "1", "order_1", "Order 1 Details Updated",
-                        "1", "payment_1", "Payment 1 Details Updated"));
-
-        // Delete the payment record for key 1, which should generate a deletion for the join
+        /* -------- DELETE/REINSERT TESTS ----------- */
+        
+        // -D on payment emits -D for join
         deletePayment("1", "payment_1", "Payment 1 Details Updated");
+        emits(DELETE, "1", "Gus", "User 1 Details Updated",
+                    "1", "order_1", "Order 1 Details Updated",
+                    "1", "payment_1", "Payment 1 Details Updated");
 
-        // Should emit a delete for the old join result
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.DELETE,
-                        "1", "Gus", "User 1 Details Updated",
-                        "1", "order_1", "Order 1 Details Updated",
-                        "1", "payment_1", "Payment 1 Details Updated"));
-
-        // Add a matching payment record back for key "1"
+        // Re-add payment emits +I
         insertPayment("1", "payment_1", "Payment 1 New Details");
+        emits(INSERT, "1", "Gus", "User 1 Details Updated",
+                     "1", "order_1", "Order 1 Details Updated",
+                     "1", "payment_1", "Payment 1 New Details");
 
-        // Should emit joined record for key "1"
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.INSERT,
-                        "1", "Gus", "User 1 Details Updated",
-                        "1", "order_1", "Order 1 Details Updated",
-                        "1", "payment_1", "Payment 1 New Details"));
-
-        // Test key updates by inserting records with key "2"
+        /* -------- SECOND JOIN TESTS ----------- */
+        
+        // Adding a second set with key "2"
         insertUser("2", "Bob", "User 2 Details");
         insertOrder("2", "order_2", "Order 2 Details");
         insertPayment("2", "payment_2", "Payment 2 Details");
+        emits(INSERT, "2", "Bob", "User 2 Details",
+                     "2", "order_2", "Order 2 Details",
+                     "2", "payment_2", "Payment 2 Details");
 
-        // Should emit joined record for key "2"
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.INSERT,
-                        "2", "Bob", "User 2 Details",
-                        "2", "order_2", "Order 2 Details",
-                        "2", "payment_2", "Payment 2 Details"));
-
-        // Delete user 2
+        // Delete user 2 emits -D
         deleteUser("2", "Bob", "User 2 Details");
+        emits(DELETE, "2", "Bob", "User 2 Details",
+                    "2", "order_2", "Order 2 Details",
+                    "2", "payment_2", "Payment 2 Details");
 
-        // Should emit a delete for the old join result
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.DELETE,
-                        "2", "Bob", "User 2 Details",
-                        "2", "order_2", "Order 2 Details",
-                        "2", "payment_2", "Payment 2 Details"));
-
-        // Add updated matching record for key "2"
+        // Re-add user 2 with update emits +I
         insertUser("2", "Bob_Updated", "User 2 Details Updated");
-
-        // Should emit the row again with updated records
-        assertor.shouldEmit(
-                testHarness,
-                rowOfKind(
-                        RowKind.INSERT,
-                        "2", "Bob_Updated", "User 2 Details Updated",
-                        "2", "order_2", "Order 2 Details",
-                        "2", "payment_2", "Payment 2 Details"));
+        emits(INSERT, "2", "Bob_Updated", "User 2 Details Updated",
+                     "2", "order_2", "Order 2 Details",
+                     "2", "payment_2", "Payment 2 Details");
     }
 }
