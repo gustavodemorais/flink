@@ -1,20 +1,20 @@
 package org.apache.flink.table.runtime.operators.join.stream;
 
+import static org.apache.flink.table.runtime.util.StreamRecordUtils.*;
+
+import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.flink.testutils.junit.extensions.parameterized.Parameter;
 import org.apache.flink.testutils.junit.extensions.parameterized.ParameterizedTestExtension;
 import org.apache.flink.testutils.junit.extensions.parameterized.Parameters;
 import org.apache.flink.types.RowKind;
-
 import org.junit.jupiter.api.TestTemplate;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.Arrays;
 import java.util.List;
 
-import static org.apache.flink.table.runtime.util.StreamRecordUtils.*;
-
 @ExtendWith(ParameterizedTestExtension.class)
-class StreamingTwoWayMultiJoinOperatorTest extends StreamingMultiJoinOperatorTestBase {
+class StreamingTwoWayInnerMultiJoinOperatorTest extends StreamingMultiJoinOperatorTestBase {
 
     @Parameters(name = "enableAsyncState = {0}")
     public static List<Boolean> enableAsyncState() {
@@ -23,8 +23,9 @@ class StreamingTwoWayMultiJoinOperatorTest extends StreamingMultiJoinOperatorTes
 
     @Parameter private boolean enableAsyncState;
 
-    public StreamingTwoWayMultiJoinOperatorTest() {
-        super(2); // Two-way join specific test class
+    public StreamingTwoWayInnerMultiJoinOperatorTest() {
+        // For inner join test, set outerJoinFlags to false for all inputs
+        super(2, List.of(JoinRelType.INNER, JoinRelType.INNER), false);
     }
 
     @TestTemplate
@@ -170,6 +171,191 @@ class StreamingTwoWayMultiJoinOperatorTest extends StreamingMultiJoinOperatorTes
 }
 
 @ExtendWith(ParameterizedTestExtension.class)
+class StreamingTwoWayOuterMultiJoinOperatorTest extends StreamingMultiJoinOperatorTestBase {
+
+    @Parameters(name = "enableAsyncState = {0}")
+    public static List<Boolean> enableAsyncState() {
+        return Arrays.asList(false);
+    }
+
+    @Parameter private boolean enableAsyncState;
+
+    public StreamingTwoWayOuterMultiJoinOperatorTest() {
+        // todo gustavo double chheck how to set the array properly here
+        // For outer join test, set outerJoinFlags to true for all inputs to test full outer join
+        super(2, List.of(JoinRelType.INNER, JoinRelType.LEFT), false);
+    }
+
+    @TestTemplate
+    void testTwoWayLeftOuterJoin() throws Exception {
+        // Process first input - add a record with key "1"
+        testHarness.processElement(
+                0,
+                insertRecord(
+                        "order_1", // id
+                        "1", // key
+                        "Order 1 Details" // payload
+                ));
+
+        // Should emit joined record with null values for right side (for left outer join)
+        assertor.shouldEmit(
+                testHarness,
+                rowOfKind(
+                        RowKind.INSERT,
+                        "order_1",
+                        "1",
+                        "Order 1 Details",
+                        null, // Right side id is null
+                        null, // Right side key is null
+                        null // Right side payload is null
+                ));
+
+        // Process second input - add a record with key "2" that has no match in first input
+        testHarness.processElement(
+                1,
+                insertRecord(
+                        "shipment_2", // id
+                        "2", // key
+                        "Shipment 2 Details" // payload
+                ));
+
+        // Should emit joined record with null values for left side (for right outer join)
+        assertor.shouldEmitNothing(testHarness);
+
+        // Process second input - add a record with matching key "1"
+        testHarness.processElement(
+                1,
+                insertRecord(
+                        "shipment_1", // id
+                        "1", // key
+                        "Shipment 1 Details" // payload
+                ));
+
+        // Should emit an update to the previous left outer join result
+        // First delete the old record with nulls and then
+        assertor.shouldEmit(
+                testHarness,
+                rowOfKind(RowKind.DELETE, "order_1", "1", "Order 1 Details", null, null, null),
+                rowOfKind(
+                        RowKind.INSERT,
+                        "order_1",
+                        "1",
+                        "Order 1 Details",
+                        "shipment_1",
+                        "1",
+                        "Shipment 1 Details"));
+
+        // Process second input - add a record with matching key "1"
+        testHarness.processElement(
+                1,
+                deleteRecord(
+                        "shipment_1", // id
+                        "1", // key
+                        "Shipment 1 Details" // payload
+                ));
+
+        // Should emit an update to the previous left outer join result
+        // First delete the old record with nulls and then
+        assertor.shouldEmit(
+                testHarness,
+                rowOfKind(
+                        RowKind.DELETE,
+                        "order_1",
+                        "1",
+                        "Order 1 Details",
+                        "shipment_1",
+                        "1",
+                        "Shipment 1 Details"),
+                rowOfKind(
+                        RowKind.INSERT,
+                        "order_1",
+                        "1",
+                        "Order 1 Details",
+                        null,
+                        null,
+                        null));
+
+        /*// todo test adding a deletion of a record that doesn't exist
+        testHarness.processElement(
+                1,
+                deleteRecord(
+                        "shipment_1", // id
+                        "1", // key
+                        "Shipment 1 Details" // payload
+                ));*/
+
+        // Add value back
+        testHarness.processElement(
+                1,
+                insertRecord(
+                        "shipment_1", // id
+                        "1", // key
+                        "Shipment 1 Details" // payload
+                ));
+
+        // Join output should be there
+        assertor.shouldEmit(
+                testHarness,
+                rowOfKind(RowKind.DELETE, "order_1", "1", "Order 1 Details", null, null, null),
+                rowOfKind(
+                        RowKind.INSERT,
+                        "order_1",
+                        "1",
+                        "Order 1 Details",
+                        "shipment_1",
+                        "1",
+                        "Shipment 1 Details"));
+
+        // Update first input record
+        testHarness.processElement(0, updateAfterRecord("order_1", "1", "Order 1 Updated"));
+
+        // Should emit updated joined record
+        assertor.shouldEmit(
+                testHarness,
+                rowOfKind(
+                        RowKind.UPDATE_AFTER,
+                        "order_1",
+                        "1",
+                        "Order 1 Updated",
+                        "shipment_1",
+                        "1",
+                        "Shipment 1 Details"));
+
+        // Delete first input record with key "1"
+        testHarness.processElement(0, deleteRecord("order_1", "1", "Order 1 Updated"));
+
+        // Should emit a delete for the join result and
+        // a right outer join record for shipment_1 since order_1 was deleted
+        assertor.shouldEmit(
+                testHarness,
+                rowOfKind(
+                        RowKind.DELETE,
+                        "order_1",
+                        "1",
+                        "Order 1 Updated",
+                        "shipment_1",
+                        "1",
+                        "Shipment 1 Details"));
+        ;
+
+        // Add a matching order record back for key "1"
+        testHarness.processElement(0, insertRecord("order_1_new", "1", "Order 1 New"));
+
+        // Should delete the right outer join record and a joined record for key "1"
+        assertor.shouldEmit(
+                testHarness,
+                rowOfKind(
+                        RowKind.INSERT,
+                        "order_1_new",
+                        "1",
+                        "Order 1 New",
+                        "shipment_1",
+                        "1",
+                        "Shipment 1 Details"));
+    }
+}
+
+@ExtendWith(ParameterizedTestExtension.class)
 class StreamingThreeWayJoinOperatorTest extends StreamingMultiJoinOperatorTestBase {
 
     @Parameters(name = "enableAsyncState = {0}")
@@ -180,7 +366,8 @@ class StreamingThreeWayJoinOperatorTest extends StreamingMultiJoinOperatorTestBa
     @Parameter private boolean enableAsyncState;
 
     public StreamingThreeWayJoinOperatorTest() {
-        super(3);
+        // For inner join test, set outerJoinFlags to false for all inputs
+        super(3, List.of(JoinRelType.INNER, JoinRelType.INNER, JoinRelType.INNER), false);
     }
 
     @TestTemplate
