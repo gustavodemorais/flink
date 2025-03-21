@@ -189,6 +189,7 @@ class StreamingTwoWayOuterMultiJoinOperatorTest extends StreamingMultiJoinOperat
     @TestTemplate
     void testTwoWayLeftOuterJoin() throws Exception {
         // Process first input - add a record with key "1"
+        /* -------------------------------------  +I APPEND ------------------------------------- */
         testHarness.processElement(
                 0,
                 insertRecord(
@@ -245,7 +246,9 @@ class StreamingTwoWayOuterMultiJoinOperatorTest extends StreamingMultiJoinOperat
                         "1",
                         "Shipment 1 Details"));
 
-        // Process second input - add a record with matching key "1"
+        /* -------------------------------------  -D DELETE ------------------------------------- */
+
+        // DELETE shipment 1
         testHarness.processElement(
                 1,
                 deleteRecord(
@@ -275,15 +278,6 @@ class StreamingTwoWayOuterMultiJoinOperatorTest extends StreamingMultiJoinOperat
                         null,
                         null));
 
-        /*// todo test adding a deletion of a record that doesn't exist
-        testHarness.processElement(
-                1,
-                deleteRecord(
-                        "shipment_1", // id
-                        "1", // key
-                        "Shipment 1 Details" // payload
-                ));*/
-
         // Add value back
         testHarness.processElement(
                 1,
@@ -306,10 +300,80 @@ class StreamingTwoWayOuterMultiJoinOperatorTest extends StreamingMultiJoinOperat
                         "1",
                         "Shipment 1 Details"));
 
-        // Update first input record
-        testHarness.processElement(0, updateAfterRecord("order_1", "1", "Order 1 Updated"));
+        // DELETE ORDER 1
+        testHarness.processElement(
+                0,
+                deleteRecord(
+                        "order_1",
+                        "1", // todo partial delete - get it from store
+                        "Order 1 Details" // payload
+                ));
 
-        // Should emit updated joined record
+        // Should emit an update to the previous left outer join result
+        // First delete the old record with nulls and then
+        assertor.shouldEmit(
+                testHarness,
+                rowOfKind(
+                        RowKind.DELETE,
+                        "order_1",
+                        "1",
+                        "Order 1 Details",
+                        "shipment_1",
+                        "1",
+                        "Shipment 1 Details"));
+
+        // Add value back
+        testHarness.processElement(
+                0,
+                insertRecord(
+                        "order_1",
+                        "1",
+                        "Order 1 Details" // payload
+                ));
+
+        // Join output should be there
+        assertor.shouldEmit(
+                testHarness,
+                rowOfKind(
+                        RowKind.INSERT,
+                        "order_1",
+                        "1",
+                        "Order 1 Details",
+                        "shipment_1",
+                        "1",
+                        "Shipment 1 Details"));
+
+        /* -----------------------------------  -U UPDATE BEFORE ---------------------------------*/
+
+        // ----- UPDATE ORDERS
+        testHarness.processElement(0, updateBeforeRecord("order_1", "1", "Order 1 Details"));
+
+        // First with -U and +U
+        assertor.shouldEmit(
+                testHarness,
+                rowOfKind(
+                        RowKind.UPDATE_BEFORE,
+                        "order_1",
+                        "1",
+                        "Order 1 Details",
+                        "shipment_1",
+                        "1",
+                        "Shipment 1 Details"));
+
+        testHarness.processElement(0, updateAfterRecord("order_1", "1", "Order 1 with U+"));
+        assertor.shouldEmit(
+                testHarness,
+                rowOfKind(
+                        RowKind.UPDATE_AFTER,
+                        "order_1",
+                        "1",
+                        "Order 1 with U+",
+                        "shipment_1",
+                        "1",
+                        "Shipment 1 Details"));
+
+        testHarness.processElement(0, updateAfterRecord("order_1", "1", "Order 1 Updated"));
+        // Update only with +u
         assertor.shouldEmit(
                 testHarness,
                 rowOfKind(
@@ -320,6 +384,91 @@ class StreamingTwoWayOuterMultiJoinOperatorTest extends StreamingMultiJoinOperat
                         "shipment_1",
                         "1",
                         "Shipment 1 Details"));
+
+        // ----- UPDATE SHIPMENTS
+        // TODO question check RowKind.INSERT
+        // Update first input record
+        testHarness.processElement(1, updateBeforeRecord("shipment_1", "1", "Shipment 1 Details"));
+
+        // First with -U and +U
+        // TODO Gustavo should we emit a +I(order_1,1,Order 1 Updated,null,null,null)] - check
+        assertor.shouldEmit(
+                testHarness,
+                rowOfKind(
+                        RowKind.UPDATE_BEFORE,
+                        "order_1",
+                        "1",
+                        "Order 1 Updated",
+                        "shipment_1",
+                        "1",
+                        "Shipment 1 Details"),
+                rowOfKind(
+                        RowKind.INSERT,
+                        "order_1",
+                        "1",
+                        "Order 1 Updated",
+                        null,
+                        null,
+                        null));
+
+        testHarness.processElement(1, updateAfterRecord("shipment_1", "1", "Shipment 1 with U+ AFTER -U"));
+        assertor.shouldEmit(
+                testHarness,
+                rowOfKind(
+                        RowKind.DELETE,
+                        "order_1",
+                        "1",
+                        "Order 1 Updated",
+                        null,
+                        null,
+                        null),
+                rowOfKind(
+                        RowKind.UPDATE_AFTER,
+                        "order_1",
+                        "1",
+                        "Order 1 Updated",
+                        "shipment_1",
+                        "1",
+                        "Shipment 1 with U+ AFTER -U"));
+
+        testHarness.processElement(1, updateAfterRecord("shipment_1", "1", "Shipment 1 with only U+"));
+
+        // Update only with +u
+        assertor.shouldEmit(
+                testHarness,
+                rowOfKind(
+                        RowKind.UPDATE_AFTER,
+                        "order_1",
+                        "1",
+                        "Order 1 Updated",
+                        "shipment_1",
+                        "1",
+                        "Shipment 1 with only U+"));
+
+        /* -------------------------------  +I +I MULTI APPEND --------------------------------- */
+
+        // +I SHIPMENT - second shipment for id 2
+        testHarness.processElement(
+                1,
+                insertRecord(
+                        "shipment_2", // id
+                        "1", // key
+                        "Shipment 2 details" // payload
+                ));
+
+        // Insert for new shipment
+        assertor.shouldEmit(
+                testHarness,
+                rowOfKind(
+                        RowKind.INSERT,
+                        "order_1",
+                        "1",
+                        "Order 1 Updated",
+                        "shipment_2",
+                        "1",
+                        "Shipment 2 details"));
+
+        /* -------------------------------------  -D DELETE ------------------------------------- */
 
         // Delete first input record with key "1"
         testHarness.processElement(0, deleteRecord("order_1", "1", "Order 1 Updated"));
@@ -333,15 +482,24 @@ class StreamingTwoWayOuterMultiJoinOperatorTest extends StreamingMultiJoinOperat
                         "order_1",
                         "1",
                         "Order 1 Updated",
+                        "shipment_2",
+                        "1",
+                        "Shipment 2 details"),
+                rowOfKind(
+                        RowKind.DELETE,
+                        "order_1",
+                        "1",
+                        "Order 1 Updated",
                         "shipment_1",
                         "1",
-                        "Shipment 1 Details"));
+                        "Shipment 1 with only U+"));
         ;
 
         // Add a matching order record back for key "1"
         testHarness.processElement(0, insertRecord("order_1_new", "1", "Order 1 New"));
 
         // Should delete the right outer join record and a joined record for key "1"
+        // TODO Gustavo does this order makes sense?
         assertor.shouldEmit(
                 testHarness,
                 rowOfKind(
@@ -349,10 +507,23 @@ class StreamingTwoWayOuterMultiJoinOperatorTest extends StreamingMultiJoinOperat
                         "order_1_new",
                         "1",
                         "Order 1 New",
+                        "shipment_2",
+                        "1",
+                        "Shipment 2 details"),
+                rowOfKind(
+                        RowKind.INSERT,
+                        "order_1_new",
+                        "1",
+                        "Order 1 New",
                         "shipment_1",
                         "1",
-                        "Shipment 1 Details"));
+                        "Shipment 1 with only U+"));
     }
+
+    // TODO Gustavo multiple hits
+    // TODO Gustavo Look into emiting an update before for unique update after so we drop (optimization)
+    // TODO Gustavo partial deletes: join conditions has only unique key, other fields are null and the output is the same (we get the old value from state) - ( optimization 2)
+
 }
 
 @ExtendWith(ParameterizedTestExtension.class)

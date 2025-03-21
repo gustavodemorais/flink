@@ -547,17 +547,27 @@ class StreamingJoinOperatorTest extends StreamingJoinOperatorTestBase {
                         "LineOrd#1",
                         "TRUCK"));
 
-        testHarness.setStateTtlProcessingTime(8001);
-        testHarness.processElement2(deleteRecord("LineOrd#2", "SHIP"));
+        testHarness.setStateTtlProcessingTime(10000);
+        testHarness.processElement2(deleteRecord("LineOrd#1", "TRUCK"));
         assertor.shouldEmit(
                 testHarness,
                 rowOfKind(
                         RowKind.DELETE,
                         "Ord#1",
-                        "LineOrd#2",
-                        "68 Manor Station Street, Honolulu, HI 96815",
-                        "LineOrd#2",
-                        "SHIP"));
+                        "LineOrd#1",
+                        "3 Bellevue Drive, Pottstown, PA 19464",
+                        "LineOrd#1",
+                        "TRUCK"),
+                rowOfKind(
+                        RowKind.INSERT,
+                        "Ord#1",
+                        "LineOrd#1",
+                        "3 Bellevue Drive, Pottstown, PA 19464",
+                        null,
+                        null));
+
+        testHarness.processElement2(deleteRecord("LineOrd#1", "TRUCK"));
+        assertor.shouldEmitNothing(testHarness);
     }
 
     /**

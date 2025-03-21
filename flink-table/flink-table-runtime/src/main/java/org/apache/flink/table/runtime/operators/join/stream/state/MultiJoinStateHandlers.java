@@ -219,7 +219,7 @@ public final class MultiJoinStateHandlers {
         private final JoinInputSideSpec inputSpec;
         private final long stateRetentionTime;
 
-        private transient MapState<Integer, RowData> recordState;
+        private transient MapState<String, RowData> recordState;
 
         public MultiJoinHasUniqueKeyStateHandler(
                 int inputIndex,
@@ -241,10 +241,10 @@ public final class MultiJoinStateHandlers {
         }
 
         private void initializeState(int inputIndex) {
-            MapStateDescriptor<Integer, RowData> recordStateDesc =
+            MapStateDescriptor<String, RowData> recordStateDesc =
                     new MapStateDescriptor<>(
                             "multi-join-record-state-" + inputIndex,
-                            InternalTypeInfo.of(Integer.class),
+                            InternalTypeInfo.of(String.class),
                             InternalTypeInfo.of(RowData.class));
 
             this.operator
@@ -261,13 +261,14 @@ public final class MultiJoinStateHandlers {
         @Override
         public void addRecord(RowData record) throws Exception {
             // still hard coded, we'll use the key selector
-            int key = Integer.parseInt(record.getString(1).toString());
+            // TODO GUSTAVO
+            String key = record.getString(0).toString();
             recordState.put(key, record);
         }
 
         public void retractRecord(RowData record) throws Exception {
             // still hard coded, we'll use the key selector
-            int key = Integer.parseInt(record.getString(1).toString());
+            String key = record.getString(0).toString();
             recordState.remove(key);
         }
     }

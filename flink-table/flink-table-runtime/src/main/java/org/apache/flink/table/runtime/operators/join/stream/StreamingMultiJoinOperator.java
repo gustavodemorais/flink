@@ -169,8 +169,8 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         } else {
             if (stateHandlers.get(inputId) instanceof MultiOuterJoinStateHandler) {
                 var outStateHandler = ((MultiOuterJoinStateHandler) stateHandlers.get(inputId));
-                var numOfAssociations = outStateHandler.getRecordAssociations(input);
-                outStateHandler.addRecord(input, numOfAssociations);
+                var associations = outStateHandler.getRecordAssociations(input);
+                outStateHandler.addRecord(input, associations);
             } else {
                 stateHandlers.get(inputId).addRecord(input);
             }
@@ -247,7 +247,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
                            allInputRecords, hasMatches);
     }
 
-    private void recursiveMultiJoin(
+    private boolean recursiveMultiJoin(
             int depth,
             RowData input,
             int inputId,
@@ -255,41 +255,46 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             List<JoinRecordIterator> allInputRecords,
             boolean[] hasMatches)
             throws Exception {
+        var isUpsert = input.getRowKind() == RowKind.UPDATE_AFTER || input.getRowKind() == RowKind.INSERT;
+        var isRetract = !isUpsert;
+        var rightSide = depth == inputSpecs.size() ? depth - 1 : depth; // reached last input and we're at depth + 1
+        var leftSide = rightSide - 1;
+        var leftJoin = rightSide > 0 && joinTypes.get(rightSide) == JoinRelType.LEFT;
         if (depth == inputSpecs.size()) {
-            var isUpsert = input.getRowKind() == RowKind.UPDATE_AFTER || input.getRowKind() == RowKind.INSERT;
-            var rightSide = depth -1 ;
-            var leftSide = rightSide - 1;
             var inputIsLeft = inputId < rightSide;
             var inputIsRight = !inputIsLeft;
-            var leftJoin = joinTypes.get(rightSide) == JoinRelType.LEFT;
+            // Number of associations for one record in the left outer side to the right
+            // if we get no associations for this left record, we have to pad
             int associations =
                     allInputRecords.get(leftSide).getRecordWithAssociations().f1;
             Arrays.fill(hasMatches, true);
             if (multiJoinCondition.apply(currentRows)) {
                 // Retract previous padded row
-                var appendedRight = inputIsRight && associations == 0;
+                var appendedRight = inputIsRight && associations == 0 && isUpsert;
+
                 if (leftJoin && appendedRight) {
-                    emitRowWithNullPaddedInput(RowKind.DELETE, rightSide, currentRows);
+                    emitRowWithNullPaddedSide(RowKind.DELETE, rightSide, currentRows);
                 }
 
+                /* Theoreticallyw we'd have check if isUpsert || (isRetract && associations > 0)
+                 But isRetract && associations < 0 should not happen.
+                 This'd also be a bit expensive because we'd have to check the previous associations*/
                 // Emit the matching row for both upserts and retractions
-                associations = updateAssociations(currentRows, isUpsert, associations, leftSide);
                 emitRow(input.getRowKind(), currentRows);
+
+                associations = updateAssociations(currentRows, isUpsert, associations, leftSide);
 
                 // Emit a padded row
-                var deletedRightSide = associations == 0 && !inputIsLeft;
-                if (leftJoin && deletedRightSide) {
-                    emitRowWithNullPaddedInput(RowKind.INSERT, rightSide, currentRows);
+                var retractedRight = associations == 0 && !inputIsLeft && !isUpsert;
+
+                if (leftJoin && retractedRight) {
+                    emitRowWithNullPaddedSide(RowKind.INSERT, rightSide, currentRows);
                 }
 
-            } else if (leftJoin) {
-                currentRows[rightSide] = nullRows.get(rightSide);
-
-                emitRow(input.getRowKind(), currentRows);
-                hasMatches[rightSide] = true;
+                return true;
             }
 
-            return;
+            return false;
         }
 
         // For the current depth, iterate over all possible rows
@@ -297,26 +302,22 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         while (allInputRecords.get(depth).hasNext()) {
             currentRows[depth] = allInputRecords.get(depth).next();
 
-            // if we get to the last one and there are no matches we have to pad the row
-            if (joinTypes.get(depth) != JoinRelType.INNER) {
-                if (joinTypes.get(depth) == JoinRelType.LEFT && outerJoinConditions[depth].apply(currentRows)) {
-                    matched = true;
-                } else {
-                    continue;
-                }
+            // Short circuit join if this already doesn't match
+            if (leftJoin && !outerJoinConditions[depth].apply(currentRows)) {
+                continue;
             }
 
-            recursiveMultiJoin(depth + 1, input, inputId, currentRows, allInputRecords, hasMatches);
+            // Recursively join with the next input
+            matched = recursiveMultiJoin(depth + 1, input, inputId, currentRows, allInputRecords, hasMatches);
         }
 
-        if (joinTypes.get(depth) != JoinRelType.INNER) {
-            if (joinTypes.get(depth) == JoinRelType.LEFT && !matched) {
-                currentRows[depth] = nullRows.get(depth);
-                recursiveMultiJoin(depth + 1, input, inputId, currentRows, allInputRecords, hasMatches);
-            }
+        // If it's a left join and we haven't matched anything, emit a padded row
+        if (leftJoin && !matched) {
+            currentRows[depth] = nullRows.get(depth);
+            emitRow(input.getRowKind(), currentRows);
         }
 
-        // if we reach the last one and there are not matches we have to pad the row
+        return matched;
     }
 
     private int updateAssociations(
@@ -341,14 +342,17 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         for (int i = 0; i < inputSpecs.size(); i++) {
             if (i == inputId) {
                 // keep the number of associations if the input exists
-                int numOfAssociations = 0;
+                int associations = 0;
                 // change this so I don't have to do the instance of
+                /* commented this because if we have an +U on the left we actually
+                // want to count all associations on the right again and update the number of associations
+                // for this +U but not add it. eg ((2, "order_2") 1) should turn into ((2, "order_2_u"), 1) and not ((2, "order_2_u"), 2)
                 if (stateHandlers.get(inputId) instanceof MultiOuterJoinStateHandler) {
                     var outStateHandler = ((MultiOuterJoinStateHandler) stateHandlers.get(inputId));
                     numOfAssociations = outStateHandler.getRecordAssociations(input);
-                }
+                }*/
 
-                allInputRecords.add(JoinRecordIterator.forSingleRecord(new Tuple2<>(input, numOfAssociations)));
+                allInputRecords.add(JoinRecordIterator.forSingleRecord(new Tuple2<>(input, associations)));
             } else {
                 JoinRecordIterator records = stateHandlers.get(i).getRecordsWithAssociations();
                 allInputRecords.add(records);
@@ -366,7 +370,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         collector.collect(joinedRow);
     }
 
-    private void emitRowWithNullPaddedInput(RowKind rowKind, int inputId, RowData[] rows) {
+    private void emitRowWithNullPaddedSide(RowKind rowKind, int inputId, RowData[] rows) {
         var paddedRows = nullPadInput(inputId, rows);
         // Build the joined row by progressively joining the inputs
         RowData joinedRow = paddedRows[0];
