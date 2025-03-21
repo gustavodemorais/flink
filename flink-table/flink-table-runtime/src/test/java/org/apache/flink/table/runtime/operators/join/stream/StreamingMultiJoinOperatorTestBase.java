@@ -16,6 +16,7 @@ import org.apache.flink.table.runtime.keyselector.RowDataKeySelector;
 import org.apache.flink.table.runtime.operators.join.stream.utils.JoinInputSideSpec;
 import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
 import org.apache.flink.table.runtime.util.RowDataHarnessAssertor;
+import org.apache.flink.table.runtime.util.StreamRecordUtils;
 import org.apache.flink.table.types.logical.CharType;
 import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.RowType;
@@ -69,6 +70,8 @@ public abstract class StreamingMultiJoinOperatorTestBase {
         // TODO Gustavo get rid of this
         this.dummyKeySelectors = keySelectorsDummy();
     }
+
+
 
     protected InternalTypeInfo<RowData> createInputTypeInfo(int inputIndex) {
         return InternalTypeInfo.of(
@@ -389,5 +392,73 @@ public abstract class StreamingMultiJoinOperatorTestBase {
         return new KeyedMultiInputStreamOperatorTestHarness<>(
                 new MultiStreamingJoinOperatorFactory(inputSpecs, dummyKeySelectors, inputTypeInfos, joinTypes, isFullOuterJoin),
                 TypeInformation.of(String.class));
+    }
+
+    // Helper methods for inserting records
+    protected void insertUser(String userId, String userName, String details) throws Exception {
+        testHarness.processElement(0, StreamRecordUtils.insertRecord(userId, userName, details));
+    }
+
+    protected void insertOrder(String userId, String orderId, String details) throws Exception {
+        testHarness.processElement(1, StreamRecordUtils.insertRecord(userId, orderId, details));
+    }
+
+    protected void insertPayment(String userId, String paymentId, String details) throws Exception {
+        testHarness.processElement(2, StreamRecordUtils.insertRecord(userId, paymentId, details));
+    }
+
+    // Helper methods for updating records - with before AND after
+    protected void updateBeforeUser(String userId, String userName, String details) throws Exception {
+        testHarness.processElement(0, StreamRecordUtils.updateBeforeRecord(userId, userName, details));
+    }
+
+    protected void updateAfterUser(String userId, String userName, String details) throws Exception {
+        testHarness.processElement(0, StreamRecordUtils.updateAfterRecord(userId, userName, details));
+    }
+
+    protected void updateBeforeOrder(String userId, String orderId, String details) throws Exception {
+        testHarness.processElement(1, StreamRecordUtils.updateBeforeRecord(userId, orderId, details));
+    }
+
+    protected void updateAfterOrder(String userId, String orderId, String details) throws Exception {
+        testHarness.processElement(1, StreamRecordUtils.updateAfterRecord(userId, orderId, details));
+    }
+
+    protected void updateBeforePayment(String userId, String paymentId, String details) throws Exception {
+        testHarness.processElement(2, StreamRecordUtils.updateBeforeRecord(userId, paymentId, details));
+    }
+
+    protected void updateAfterPayment(String userId, String paymentId, String details) throws Exception {
+        testHarness.processElement(2, StreamRecordUtils.updateAfterRecord(userId, paymentId, details));
+    }
+
+    // Helper methods for deleting records
+    protected void deleteUser(String userId, String userName, String details) throws Exception {
+        testHarness.processElement(0, StreamRecordUtils.deleteRecord(userId, userName, details));
+    }
+
+    protected void deleteOrder(String userId, String orderId, String details) throws Exception {
+        testHarness.processElement(1, StreamRecordUtils.deleteRecord(userId, orderId, details));
+    }
+
+    protected void deletePayment(String userId, String paymentId, String details) throws Exception {
+        testHarness.processElement(2, StreamRecordUtils.deleteRecord(userId, paymentId, details));
+    }
+
+    // Generic helper methods for dynamic input index
+    protected void insertRecord(int inputIndex, String... fields) throws Exception {
+        testHarness.processElement(inputIndex, StreamRecordUtils.insertRecord(fields));
+    }
+
+    protected void updateBeforeRecord(int inputIndex, String... fields) throws Exception {
+        testHarness.processElement(inputIndex, StreamRecordUtils.updateBeforeRecord(fields));
+    }
+
+    protected void updateAfterRecord(int inputIndex, String... fields) throws Exception {
+        testHarness.processElement(inputIndex, StreamRecordUtils.updateAfterRecord(fields));
+    }
+
+    protected void deleteRecord(int inputIndex, String... fields) throws Exception {
+        testHarness.processElement(inputIndex, StreamRecordUtils.deleteRecord(fields));
     }
 }
