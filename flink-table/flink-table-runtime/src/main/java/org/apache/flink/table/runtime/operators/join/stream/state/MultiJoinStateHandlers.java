@@ -34,8 +34,11 @@ import org.apache.flink.table.runtime.operators.join.stream.utils.JoinInputSideS
 import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
 import org.apache.flink.util.IterableIterator;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.List;
+import java.util.NoSuchElementException;
 
 /**
  * A simple implementation of {@link MultiJoinHasUniqueKeyStateHandler} that uses a MapState to store records.
@@ -69,6 +72,14 @@ public final class MultiJoinStateHandlers {
         boolean hasAssociationCounts();
         
         /**
+         * Reset the iterator to restart from the beginning.
+         */
+        default void reset() {
+            // Default implementation does nothing.
+            // Should be overridden by implementations that support resetting.
+        }
+        
+        /**
          * Create a JoinRecordIterator from a regular RowData iterator.
          * @param iterator The RowData iterator
          * @return A JoinRecordIterator without association counts
@@ -83,7 +94,46 @@ public final class MultiJoinStateHandlers {
          * @return A JoinRecordIterator with association counts
          */
         static JoinRecordIterator fromTupleIterator(Iterator<Tuple2<RowData, Integer>> iterator) {
-            return new AssociativeJoinRecordIterator(iterator);
+            // Convert iterator to a list for resetting capability
+            List<Tuple2<RowData, Integer>> tuples = new ArrayList<>();
+            while (iterator.hasNext()) {
+                tuples.add(iterator.next());
+            }
+            
+            return new JoinRecordIterator() {
+                private int index = 0;
+                private Tuple2<RowData, Integer> currentTuple = null;
+
+                @Override
+                public boolean hasNext() {
+                    return index < tuples.size();
+                }
+
+                @Override
+                public RowData next() {
+                    if (!hasNext()) {
+                        throw new NoSuchElementException();
+                    }
+                    currentTuple = tuples.get(index++);
+                    return currentTuple.f0;
+                }
+
+                @Override
+                public Tuple2<RowData, Integer> getRecordWithAssociations() {
+                    return currentTuple;
+                }
+                
+                @Override
+                public void reset() {
+                    index = 0;
+                    currentTuple = null;
+                }
+
+                @Override
+                public boolean hasAssociationCounts() {
+                    return false;
+                }
+            };
         }
         
         /**
@@ -101,7 +151,38 @@ public final class MultiJoinStateHandlers {
          * @return A JoinRecordIterator with a single tuple record
          */
         static JoinRecordIterator forSingleRecord(Tuple2<RowData, Integer> tuple) {
-            return fromTupleIterator(Collections.singleton(tuple).iterator());
+            return new JoinRecordIterator() {
+                private boolean hasNext = true;
+
+                @Override
+                public boolean hasNext() {
+                    return hasNext;
+                }
+
+                @Override
+                public RowData next() {
+                    if (!hasNext) {
+                        throw new NoSuchElementException();
+                    }
+                    hasNext = false;
+                    return tuple.f0;
+                }
+
+                @Override
+                public Tuple2<RowData, Integer> getRecordWithAssociations() {
+                    return tuple;
+                }
+                
+                @Override
+                public void reset() {
+                    hasNext = true;
+                }
+
+                @Override
+                public boolean hasAssociationCounts() {
+                    return false;
+                }
+            };
         }
     }
     
@@ -136,38 +217,11 @@ public final class MultiJoinStateHandlers {
         public boolean hasAssociationCounts() {
             return false;
         }
-    }
-    
-    /**
-     * Implementation of JoinRecordIterator for Tuple2<RowData, Integer> iterators with association counts.
-     */
-    private static class AssociativeJoinRecordIterator implements JoinRecordIterator {
-        private final Iterator<Tuple2<RowData, Integer>> iterator;
-        private Tuple2<RowData, Integer> current;
-        
-        AssociativeJoinRecordIterator(Iterator<Tuple2<RowData, Integer>> iterator) {
-            this.iterator = iterator;
-        }
         
         @Override
-        public boolean hasNext() {
-            return iterator.hasNext();
-        }
-        
-        @Override
-        public RowData next() {
-            current = iterator.next();
-            return current.f0;
-        }
-        
-        @Override
-        public Tuple2<RowData, Integer> getRecordWithAssociations() {
-            return current;
-        }
-        
-        @Override
-        public boolean hasAssociationCounts() {
-            return true;
+        public void reset() {
+            // Default implementation does nothing.
+            // Should be overridden by implementations that support resetting.
         }
     }
     

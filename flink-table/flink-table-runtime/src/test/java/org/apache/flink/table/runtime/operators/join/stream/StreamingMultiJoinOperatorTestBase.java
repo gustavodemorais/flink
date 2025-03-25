@@ -106,6 +106,14 @@ public abstract class StreamingMultiJoinOperatorTestBase {
                 rowOfKind(kind2, fields2));
     }
 
+    protected void emits(RowKind kind1, String[] fields1, RowKind kind2, String[] fields2, RowKind kind3, String[] fields3) throws Exception {
+        assertor.shouldEmit(
+                testHarness,
+                rowOfKind(kind1, fields1),
+                rowOfKind(kind2, fields2),
+                rowOfKind(kind3, fields3));
+    }
+
     /**
      * Assert that two rows are emitted with varargs field values.
      * Example: emits(DELETE, "1", "user1", "details1", null, null, null,
@@ -457,7 +465,7 @@ public abstract class StreamingMultiJoinOperatorTestBase {
                             + "        }\n"
                             + "\n"
                             + "        // Check for nulls in key columns\n"
-                            + "        if (inputs[0].isNullAt(0) || inputs[compareIndex].isNullAt(0)) {\n"
+                            + "        if (inputs[compareIndex - 1].isNullAt(0) || inputs[compareIndex].isNullAt(0)) {\n"
                             + "            return false;\n"
                             + "        }\n"
                             + "\n"
