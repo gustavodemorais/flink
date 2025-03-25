@@ -18,8 +18,6 @@
 
 package org.apache.flink.table.runtime.operators.join.stream.state;
 
-import static org.apache.flink.util.Preconditions.checkNotNull;
-
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.typeinfo.Types;
@@ -40,8 +38,11 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
 
+import static org.apache.flink.util.Preconditions.checkNotNull;
+
 /**
- * A simple implementation of {@link MultiJoinHasUniqueKeyStateHandler} that uses a MapState to store records.
+ * A simple implementation of {@link MultiJoinHasUniqueKeyStateHandler} that uses a MapState to
+ * store records.
  */
 
 // TODO This is still ongoing while still in draft PR
@@ -53,43 +54,45 @@ import java.util.NoSuchElementException;
 // Add state TTL
 
 public final class MultiJoinStateHandlers {
-    
+
     /**
-     * Interface for iterating over join records with additional metadata.
-     * This allows handling both simple RowData iterators and iterators with association counts.
+     * Interface for iterating over join records with additional metadata. This allows handling both
+     * simple RowData iterators and iterators with association counts.
      */
     public interface JoinRecordIterator extends Iterator<RowData> {
         /**
          * Get the current record and its number of associations.
+         *
          * @return Tuple containing the record and its association count
          */
         Tuple2<RowData, Integer> getRecordWithAssociations();
-        
+
         /**
          * Whether this iterator supports association counts.
+         *
          * @return true if association counts are available
          */
         boolean hasAssociationCounts();
-        
-        /**
-         * Reset the iterator to restart from the beginning.
-         */
+
+        /** Reset the iterator to restart from the beginning. */
         default void reset() {
             // Default implementation does nothing.
             // Should be overridden by implementations that support resetting.
         }
-        
+
         /**
          * Create a JoinRecordIterator from a regular RowData iterator.
+         *
          * @param iterator The RowData iterator
          * @return A JoinRecordIterator without association counts
          */
         static JoinRecordIterator fromRowDataIterator(Iterator<RowData> iterator) {
             return new SimpleJoinRecordIterator(iterator);
         }
-        
+
         /**
          * Create a JoinRecordIterator from a Tuple2<RowData, Integer> iterator.
+         *
          * @param iterator The iterator with association counts
          * @return A JoinRecordIterator with association counts
          */
@@ -99,7 +102,7 @@ public final class MultiJoinStateHandlers {
             while (iterator.hasNext()) {
                 tuples.add(iterator.next());
             }
-            
+
             return new JoinRecordIterator() {
                 private int index = 0;
                 private Tuple2<RowData, Integer> currentTuple = null;
@@ -122,7 +125,7 @@ public final class MultiJoinStateHandlers {
                 public Tuple2<RowData, Integer> getRecordWithAssociations() {
                     return currentTuple;
                 }
-                
+
                 @Override
                 public void reset() {
                     index = 0;
@@ -135,9 +138,10 @@ public final class MultiJoinStateHandlers {
                 }
             };
         }
-        
+
         /**
          * Create a JoinRecordIterator for a single record.
+         *
          * @param record The single record
          * @return A JoinRecordIterator with a single record
          */
@@ -147,6 +151,7 @@ public final class MultiJoinStateHandlers {
 
         /**
          * Create a JoinRecordIterator for a single tuple record.
+         *
          * @param tuple The single tuple
          * @return A JoinRecordIterator with a single tuple record
          */
@@ -172,7 +177,7 @@ public final class MultiJoinStateHandlers {
                 public Tuple2<RowData, Integer> getRecordWithAssociations() {
                     return tuple;
                 }
-                
+
                 @Override
                 public void reset() {
                     hasNext = true;
@@ -185,49 +190,48 @@ public final class MultiJoinStateHandlers {
             };
         }
     }
-    
+
     /**
-     * Implementation of JoinRecordIterator for regular RowData iterators without association counts.
+     * Implementation of JoinRecordIterator for regular RowData iterators without association
+     * counts.
      */
     private static class SimpleJoinRecordIterator implements JoinRecordIterator {
         private final Iterator<RowData> iterator;
         private RowData current;
-        
+
         SimpleJoinRecordIterator(Iterator<RowData> iterator) {
             this.iterator = iterator;
         }
-        
+
         @Override
         public boolean hasNext() {
             return iterator.hasNext();
         }
-        
+
         @Override
         public RowData next() {
             current = iterator.next();
             return current;
         }
-        
+
         @Override
         public Tuple2<RowData, Integer> getRecordWithAssociations() {
             return Tuple2.of(current, -1); // -1 indicates no association count available
         }
-        
+
         @Override
         public boolean hasAssociationCounts() {
             return false;
         }
-        
+
         @Override
         public void reset() {
             // Default implementation does nothing.
             // Should be overridden by implementations that support resetting.
         }
     }
-    
-    /**
-     * Common interface for join state handlers that manage state for join operations.
-     */
+
+    /** Common interface for join state handlers that manage state for join operations. */
     public interface MultiJoinStateHandler {
         /**
          * Retrieves all records stored in the state.
@@ -236,7 +240,7 @@ public final class MultiJoinStateHandlers {
          * @throws Exception if any error occurs
          */
         Iterator<RowData> getRecords() throws Exception;
-        
+
         /**
          * Retrieves all records with their association counts if available.
          *
@@ -246,7 +250,7 @@ public final class MultiJoinStateHandlers {
         default JoinRecordIterator getRecordsWithAssociations() throws Exception {
             return JoinRecordIterator.fromRowDataIterator(getRecords());
         }
-        
+
         /**
          * Adds a record to the state.
          *
@@ -263,7 +267,7 @@ public final class MultiJoinStateHandlers {
          */
         void retractRecord(RowData record) throws Exception;
     }
-    
+
     public static class MultiJoinHasUniqueKeyStateHandler implements MultiJoinStateHandler {
 
         private final StreamingMultiJoinOperator operator;
@@ -415,7 +419,7 @@ public final class MultiJoinStateHandlers {
         public Iterator<RowData> getRecords() throws Exception {
             return new RecordsIterable(getRecordsAndNumOfAssociations()).iterator();
         }
-        
+
         @Override
         public JoinRecordIterator getRecordsWithAssociations() throws Exception {
             return JoinRecordIterator.fromTupleIterator(getRecordsAndNumOfAssociations());

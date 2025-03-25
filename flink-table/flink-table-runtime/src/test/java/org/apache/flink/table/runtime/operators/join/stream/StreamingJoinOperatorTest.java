@@ -18,12 +18,6 @@
 
 package org.apache.flink.table.runtime.operators.join.stream;
 
-import static org.apache.flink.table.runtime.util.StreamRecordUtils.deleteRecord;
-import static org.apache.flink.table.runtime.util.StreamRecordUtils.insertRecord;
-import static org.apache.flink.table.runtime.util.StreamRecordUtils.rowOfKind;
-import static org.apache.flink.table.runtime.util.StreamRecordUtils.updateAfterRecord;
-import static org.junit.jupiter.api.Assumptions.assumeFalse;
-
 import org.apache.flink.streaming.api.operators.TwoInputStreamOperator;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.runtime.operators.join.stream.asyncprocessing.AsyncStateStreamingJoinOperator;
@@ -33,6 +27,7 @@ import org.apache.flink.testutils.junit.extensions.parameterized.Parameter;
 import org.apache.flink.testutils.junit.extensions.parameterized.ParameterizedTestExtension;
 import org.apache.flink.testutils.junit.extensions.parameterized.Parameters;
 import org.apache.flink.types.RowKind;
+
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.api.TestTemplate;
@@ -43,6 +38,12 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.function.Function;
 import java.util.stream.Stream;
+
+import static org.apache.flink.table.runtime.util.StreamRecordUtils.deleteRecord;
+import static org.apache.flink.table.runtime.util.StreamRecordUtils.insertRecord;
+import static org.apache.flink.table.runtime.util.StreamRecordUtils.rowOfKind;
+import static org.apache.flink.table.runtime.util.StreamRecordUtils.updateAfterRecord;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 /** Harness tests for {@link StreamingJoinOperator}. */
 @ExtendWith(ParameterizedTestExtension.class)
@@ -501,7 +502,6 @@ class StreamingJoinOperatorTest extends StreamingJoinOperatorTestBase {
                         "3 Bellevue Drive, Pottstown, PA 19464",
                         "LineOrd#2",
                         "AIR"));
-
 
         testHarness.setStateTtlProcessingTime(3000);
         testHarness.processElement1(

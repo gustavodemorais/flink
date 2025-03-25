@@ -1,6 +1,5 @@
 package org.apache.flink.table.runtime.operators.join.stream;
 
-import org.apache.calcite.rel.core.JoinRelType; // todo gustavo I probably shouldn't import this here?
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.typeinfo.Types;
@@ -21,6 +20,9 @@ import org.apache.flink.table.runtime.operators.join.stream.state.MultiJoinState
 import org.apache.flink.table.runtime.operators.join.stream.utils.JoinInputSideSpec;
 import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
 import org.apache.flink.types.RowKind;
+
+// TODO Gustavo we probably shouldn't be importing calcite stuff here and we have a somewhere
+import org.apache.calcite.rel.core.JoinRelType;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -59,9 +61,11 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
 
     // TODO gustavo get rid
     private final List<KeySelector<RowData, String>> dummyKeySelectors;
+
     /**
-     * Constructor that supports binary join conditions, a multi-way join condition, and outer join conditions.
-     * If multiJoinCondition is provided, it will be used instead of binary join conditions.
+     * Constructor that supports binary join conditions, a multi-way join condition, and outer join
+     * conditions. If multiJoinCondition is provided, it will be used instead of binary join
+     * conditions.
      */
 
     /*
@@ -123,7 +127,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             MultiJoinStateHandler handler;
             // TODO GUSTAVO join type we need to have the join types here
 
-            //if (outerJoinConditions[i] == null) {
+            // if (outerJoinConditions[i] == null) {
             //  todo gustavo we still right nad outer here
             if (i + 1 < inputSpecs.size() && joinTypes.get(i + 1) == JoinRelType.LEFT) {
                 handler =
@@ -137,7 +141,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
                                 inputSpecs.get(i),
                                 inputTypes.get(i),
                                 stateRetentionTime[i]);
-            }  else {
+            } else {
                 // create outer handler
                 handler =
                         new MultiJoinHasUniqueKeyStateHandler(
@@ -174,7 +178,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         if (multiJoinCondition != null) {
             // First perform the join without adding the record to state
             performMultiJoin(input, inputId);
-            
+
             // Then add the record to state for future joins
             addRecordToState(inputId, input);
         } else {
@@ -258,7 +262,9 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
      * all inputs at once 4. It can short-circuit evaluation when any condition fails
      */
     private void performMultiJoin(RowData input, int inputId) throws Exception {
-        if (input == null) {return;}
+        if (input == null) {
+            return;
+        }
 
         // Get iterables for all inputs without modifying state
         List<JoinRecordIterator> allInputRecords = getAllInputRecords();
@@ -269,16 +275,21 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
 
         // Create a row array to build our join result
         RowData[] currentRows = new RowData[inputSpecs.size()];
-        
+
         // Process the whole join
-        recursiveMultiJoin(0, input, inputId, currentRows, allInputRecords, matches,
+        recursiveMultiJoin(
+                0,
+                input,
+                inputId,
+                currentRows,
+                allInputRecords,
+                matches,
                 matches.clone(),
-                true, false);
+                true,
+                false);
     }
 
-    /**
-     * Gets iterators for all inputs without creating singletons.
-     */
+    /** Gets iterators for all inputs without creating singletons. */
     private List<JoinRecordIterator> getAllInputRecords() throws Exception {
         List<JoinRecordIterator> allInputRecords = new ArrayList<>(inputSpecs.size());
         for (int i = 0; i < inputSpecs.size(); i++) {
@@ -289,8 +300,8 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
     }
 
     /**
-     * Processes the actual input record within the recursive join.
-     * This is called after all existing state records have been evaluated.
+     * Processes the actual input record within the recursive join. This is called after all
+     * existing state records have been evaluated.
      */
     private boolean recursiveMultiJoin(
             int depth,
@@ -299,11 +310,18 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             RowData[] currentRows,
             List<JoinRecordIterator> allInputRecords,
             int[] matches,
-            int[] emittedMatches, boolean isUpsert, boolean shouldEmit) throws Exception {
+            int[] emittedMatches,
+            boolean isUpsert,
+            boolean shouldEmit)
+            throws Exception {
         // We don't need this to be in the signature
-        // var isUpsert = input.getRowKind() == RowKind.UPDATE_AFTER || input.getRowKind() == RowKind.INSERT;
+        // var isUpsert = input.getRowKind() == RowKind.UPDATE_AFTER || input.getRowKind() ==
+        // RowKind.INSERT;
         var isRetract = !isUpsert;
-        var rightSide = depth == inputSpecs.size() ? depth - 1 : depth; // reached last input and we're at depth + 1
+        var rightSide =
+                depth == inputSpecs.size()
+                        ? depth - 1
+                        : depth; // reached last input and we're at depth + 1
         var leftSide = rightSide - 1;
         var leftJoin = rightSide > 0 && joinTypes.get(rightSide) == JoinRelType.LEFT;
 
@@ -324,7 +342,8 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
 
             // Retract previous padded row
             if (isUpsert && leftJoin) {
-                emitRetractPaddedRow(input.getRowKind(), RowKind.DELETE, currentRows, emittedMatches, inputId);
+                emitRetractPaddedRow(
+                        input.getRowKind(), RowKind.DELETE, currentRows, emittedMatches, inputId);
             }
 
             // Emit the matching row for both upserts and retractions
@@ -332,22 +351,18 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
 
             // Emit a padded row
             if (isRetract && leftJoin) {
-                emitInsertPaddedRow(input.getRowKind(), RowKind.INSERT, currentRows, emittedMatches, inputId);
+                emitInsertPaddedRow(
+                        input.getRowKind(), RowKind.INSERT, currentRows, emittedMatches, inputId);
             }
 
             return true;
         }
-        
+
         boolean depthMatched = false;
         boolean isLeftJoin = depth > 0 && joinTypes.get(depth) == JoinRelType.LEFT;
 
         // For other depths, process all records from state
         JoinRecordIterator recordIterator = stateHandlers.get(depth).getRecordsWithAssociations();
-
-        // Reset the match count for this depth
-        if (leftJoin) {
-            matches[depth - 1] = 0;
-        }
 
         // Process each record at this depth
         while (recordIterator.hasNext()) {
@@ -372,10 +387,21 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             }
 
             // Recursively continue the join
-             depthMatched = recursiveMultiJoin(
-                    depth + 1, input, inputId, currentRows, allInputRecords, matches,
-                     emittedMatches,
-                     isUpsert, shouldEmit);
+            // Reset the match count for this depth
+            if (leftJoin) {
+                matches[depth] = 0;
+            }
+            depthMatched =
+                    recursiveMultiJoin(
+                            depth + 1,
+                            input,
+                            inputId,
+                            currentRows,
+                            allInputRecords,
+                            matches,
+                            emittedMatches,
+                            isUpsert,
+                            shouldEmit);
 
             if (depthMatched) {
                 emittedMatches = matches.clone();
@@ -383,16 +409,23 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         }
 
         // If we have no matches, we try with null padding now
-        if (isLeftJoin && matches[depth - 1] == 0) {
+        if (isLeftJoin && !depthMatched && matches[depth - 1] == 0) {
             // There were no matches, we now try with null padding
             currentRows[depth] = nullRows.get(depth);
 
             // We have to call the recursive join again with the null-padded row to have a correct
             // numOfMatches array
-            depthMatched = recursiveMultiJoin(
-                    depth + 1, input, inputId, currentRows, allInputRecords, matches,
-                    emittedMatches,
-                    isUpsert, shouldEmit);
+            depthMatched =
+                    recursiveMultiJoin(
+                            depth + 1,
+                            input,
+                            inputId,
+                            currentRows,
+                            allInputRecords,
+                            matches,
+                            emittedMatches,
+                            isUpsert,
+                            shouldEmit);
 
             if (depthMatched) {
                 emittedMatches = matches.clone();
@@ -414,11 +447,20 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             }
 
             // do we need not to update num of matches now?
-            boolean inputIsUpsert = input.getRowKind() == RowKind.INSERT || input.getRowKind() == RowKind.UPDATE_AFTER;
-            depthMatched = recursiveMultiJoin(
-                    depth + 1, input, inputId, currentRows, allInputRecords, matches,
-                    emittedMatches,
-                    inputIsUpsert, true);
+            boolean inputIsUpsert =
+                    input.getRowKind() == RowKind.INSERT
+                            || input.getRowKind() == RowKind.UPDATE_AFTER;
+            depthMatched =
+                    recursiveMultiJoin(
+                            depth + 1,
+                            input,
+                            inputId,
+                            currentRows,
+                            allInputRecords,
+                            matches,
+                            emittedMatches,
+                            inputIsUpsert,
+                            true);
 
             if (depthMatched) {
                 emittedMatches = matches.clone();
@@ -429,20 +471,20 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
     }
 
     /**
-     * Emits the row with padding for inputs that had no matches.
-     * This version uses numOfMatches to determine which inputs need padding.
+     * Emits the row with padding for inputs that had no matches. This version uses numOfMatches to
+     * determine which inputs need padding.
      */
     private void emitRowWithNullPaddedRows(RowKind rowKind, RowData[] rows, int[] numOfMatches) {
         // Clone the rows to avoid modifying the original
         RowData[] paddedRows = rows.clone();
-        
+
         // Pad with nulls for any input that had no matches (except the first)
         for (int i = 1; i < paddedRows.length; i++) {
             if (numOfMatches[i - 1] == 0 && joinTypes.get(i) != JoinRelType.INNER) {
                 paddedRows[i] = nullRows.get(i);
             }
         }
-        
+
         // Build the joined row by progressively joining the inputs
         RowData joinedRow = paddedRows[0];
         for (int i = 1; i < paddedRows.length; i++) {
@@ -456,7 +498,6 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
      * join condition for all of them in one go. This is a depth-first approach to building all
      * possible combinations of rows.
      */
-
     private void collectRecords(Iterator<RowData> records, List<RowData> target) throws Exception {
         while (records.hasNext()) {
             target.add(records.next());
@@ -508,9 +549,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         super.close();
     }
 
-    /**
-     * Emits a row with the specified row kind.
-     */
+    /** Emits a row with the specified row kind. */
     private void emitRow(RowKind rowKind, RowData[] rows) {
         // Build the joined row by progressively joining the inputs
         RowData joinedRow = rows[0];
@@ -521,15 +560,21 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
     }
 
     /**
-     * Creates and emits a row with null padding for positions where no matches were found.
-     * For each position with matches[pos] = 0, the position pos + 1 will be padded with null.
+     * Creates and emits a row with null padding for positions where no matches were found. For each
+     * position with matches[pos] = 0, the position pos + 1 will be padded with null.
      *
      * @param newRowKind The RowKind to use for the emitted row (INSERT or DELETE)
      * @param currentRows The current row array to be padded
      * @param emittedMatches Array tracking matches for each position
      * @throws Exception if any error occurs during emission
      */
-    private void emitRetractPaddedRow(RowKind origRowKind, RowKind newRowKind, RowData[] currentRows, int[] emittedMatches, int inputId) throws Exception {
+    private void emitRetractPaddedRow(
+            RowKind origRowKind,
+            RowKind newRowKind,
+            RowData[] currentRows,
+            int[] emittedMatches,
+            int inputId)
+            throws Exception {
         if (currentRows == null || emittedMatches == null) {
             return;
         }
@@ -549,14 +594,16 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
                 // Pad position pos + 1 with null
                 paddedRows[pos] = nullRows.get(pos);
 
-                // Check if this actually modified the row (only mark as modified if we changed something)
+                // Check if this actually modified the row (only mark as modified if we changed
+                // something)
                 if (!currentRows[pos].equals(nullRows.get(pos))) {
                     rowsModified = true;
                 }
             }
         }
 
-        // Check if the padded row is different from the original and has at least one non-null value
+        // Check if the padded row is different from the original and has at least one non-null
+        // value
         boolean hasNonNullRow = false;
         for (RowData row : paddedRows) {
             if (row != null) {
@@ -571,7 +618,13 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         }
     }
 
-    private void emitInsertPaddedRow(RowKind origRowKind, RowKind newRowKind, RowData[] currentRows, int[] emittedMatches, int inputId) throws Exception {
+    private void emitInsertPaddedRow(
+            RowKind origRowKind,
+            RowKind newRowKind,
+            RowData[] currentRows,
+            int[] emittedMatches,
+            int inputId)
+            throws Exception {
         if (currentRows == null || emittedMatches == null) {
             return;
         }
@@ -592,14 +645,15 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             return;
         }
 
-        if (emittedMatches[inputId - 1] > 1 ) {
+        if (emittedMatches[inputId - 1] > 1) {
             return;
         } else if (emittedMatches[inputId - 1] == 1) {
             paddedRows[inputId] = nullRows.get(inputId);
             rowsModified = true;
             shouldEmit = true;
         } else {
-            throw new RuntimeException("Should not happen: we are deleting a record which doesn't exist");
+            throw new RuntimeException(
+                    "Should not happen: we are deleting a record which doesn't exist");
         }
 
         for (int i = inputId + 1; i < paddedRows.length; i++) {
