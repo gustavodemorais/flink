@@ -322,8 +322,6 @@ public final class MultiJoinStateHandlers {
 
         @Override
         public void addRecord(RowData record) throws Exception {
-            // still hard coded, we'll use the key selector
-            // TODO GUSTAVO
             String key = uniqueKeySelector.getKey(record);
             recordState.put(key, record);
         }

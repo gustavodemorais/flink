@@ -1,5 +1,6 @@
 package org.apache.flink.table.runtime.operators.join.stream;
 
+import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.api.operators.AbstractStreamOperatorFactory;
@@ -22,8 +23,6 @@ import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.table.types.logical.VarCharType;
 import org.apache.flink.table.utils.HandwrittenSelectorUtil;
 import org.apache.flink.types.RowKind;
-
-import org.apache.calcite.rel.core.JoinRelType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 
@@ -39,6 +38,7 @@ public abstract class StreamingMultiJoinOperatorTestBase {
     protected final List<RowDataKeySelector> keySelectors;
     protected final List<JoinInputSideSpec> inputSpecs;
     protected final List<JoinRelType> joinTypes;
+    protected final List<GeneratedMultiJoinCondition> outerJoinConditions;
     protected final boolean isFullOuterJoin;
 
     protected final InternalTypeInfo<RowData> joinKeyTypeInfo;
@@ -52,15 +52,17 @@ public abstract class StreamingMultiJoinOperatorTestBase {
     protected static final RowKind UPDATE_BEFORE = RowKind.UPDATE_BEFORE;
     protected static final RowKind UPDATE_AFTER = RowKind.UPDATE_AFTER;
     protected static final RowKind DELETE = RowKind.DELETE;
+    protected static final List<GeneratedMultiJoinCondition> DEFAULT_CONDITIONS = new ArrayList<>(3);
 
     protected StreamingMultiJoinOperatorTestBase(
-            int numInputs, List<JoinRelType> joinTypes, boolean isFullOuterJoin) {
+            int numInputs, List<JoinRelType> joinTypes, List<GeneratedMultiJoinCondition> outerJoinConditions,  boolean isFullOuterJoin) {
         // Initialize collections
         this.inputTypeInfos = new ArrayList<>(numInputs);
         this.keySelectors = new ArrayList<>(numInputs);
         this.inputSpecs = new ArrayList<>(numInputs);
         this.joinTypes = joinTypes;
         this.isFullOuterJoin = isFullOuterJoin;
+        this.outerJoinConditions = outerJoinConditions;
 
         // Initialize default types for each input
         for (int i = 0; i < numInputs; i++) {
@@ -68,11 +70,21 @@ public abstract class StreamingMultiJoinOperatorTestBase {
             keySelectors.add(createKeySelector(i));
         }
 
-        // Create input specs
         for (int i = 0; i < numInputs; i++) {
+            // Create input specs
             inputSpecs.add(
                     JoinInputSideSpec.withUniqueKeyContainedByJoinKey(
                             inputTypeInfos.get(i), keySelectors.get(i)));
+        }
+
+        if (outerJoinConditions.isEmpty()) {
+            for (int i = 0; i < numInputs; i++) {
+                if (this.joinTypes.get(i) != JoinRelType.INNER) {
+                    outerJoinConditions.add(createMultiJoinOuterJoinCondition(i, i - 1));
+                } else {
+                    outerJoinConditions.add(null);
+                }
+            }
         }
 
         // Join key type (assuming common key type across all inputs)
@@ -83,6 +95,10 @@ public abstract class StreamingMultiJoinOperatorTestBase {
     }
 
     // Assertion helper methods
+
+    protected static List<GeneratedMultiJoinCondition> defaultConditions() {
+        return new ArrayList<>();
+    }
 
     /** Assert that one row is emitted with the given kind and field values. */
     protected void emits(RowKind kind, String... fields) throws Exception {
@@ -115,52 +131,23 @@ public abstract class StreamingMultiJoinOperatorTestBase {
                 rowOfKind(kind3, fields3));
     }
 
-    /**
-     * Assert that two rows are emitted with varargs field values. Example: emits(DELETE, "1",
-     * "user1", "details1", null, null, null, INSERT, "1", "user1", "details1", "1", "order1",
-     * "orderDetails1")
-     */
-    /*protected void emits(RowKind kind1, String... fieldsWithKind2) throws Exception {
-        // Find the boundary between fields for first row and the second row kind
-        int i = 0;
-        while (i < fieldsWithKind2.length) {
-            if (fieldsWithKind2[i] instanceof String &&
-                    (fieldsWithKind2[i].equals("INSERT") ||
-                     fieldsWithKind2[i].equals("UPDATE_BEFORE") ||
-                     fieldsWithKind2[i].equals("UPDATE_AFTER") ||
-                     fieldsWithKind2[i].equals("DELETE"))) {
-                break;
-            }
-            i++;
-        }
-
-        // If we reached the end, there's only one row
-        if (i >= fieldsWithKind2.length) {
-            emits(kind1, fieldsWithKind2);
-            return;
-        }
-
-        // Extract fields for first row
-        String[] fields1 = Arrays.copyOfRange(fieldsWithKind2, 0, i);
-
-        // Extract kind for second row
-        RowKind kind2;
-        switch (fieldsWithKind2[i]) {
-            case "INSERT": kind2 = RowKind.INSERT; break;
-            case "UPDATE_BEFORE": kind2 = RowKind.UPDATE_BEFORE; break;
-            case "UPDATE_AFTER": kind2 = RowKind.UPDATE_AFTER; break;
-            case "DELETE": kind2 = RowKind.DELETE; break;
-            default: throw new IllegalArgumentException("Invalid row kind: " + fieldsWithKind2[i]);
-        }
-
-        // Extract fields for second row
-        String[] fields2 = Arrays.copyOfRange(fieldsWithKind2, i + 1, fieldsWithKind2.length);
-
+    protected void emits(
+            RowKind kind1,
+            String[] fields1,
+            RowKind kind2,
+            String[] fields2,
+            RowKind kind3,
+            String[] fields3,
+            RowKind kind4,
+            String[] fields4)
+            throws Exception {
         assertor.shouldEmit(
                 testHarness,
                 rowOfKind(kind1, fields1),
-                rowOfKind(kind2, fields2));
-    }*/
+                rowOfKind(kind2, fields2),
+                rowOfKind(kind3, fields3),
+                rowOfKind(kind4, fields4));
+    }
 
     /** Helper method to create a StreamRecord with the given kind and fields. */
     protected RowData rowOfKind(RowKind kind, String... fields) {
@@ -321,6 +308,7 @@ public abstract class StreamingMultiJoinOperatorTestBase {
         private final List<KeySelector<RowData, String>> dummyKeySelectors;
         protected final List<InternalTypeInfo<RowData>> inputTypeInfos;
         private final List<JoinRelType> joinTypes;
+        private final List<GeneratedMultiJoinCondition> outerJoinConditions;
         private final boolean isFullOuterJoin;
 
         public MultiStreamingJoinOperatorFactory(
@@ -328,11 +316,13 @@ public abstract class StreamingMultiJoinOperatorTestBase {
                 List<KeySelector<RowData, String>> dummyKeySelectors,
                 List<InternalTypeInfo<RowData>> inputTypeInfos,
                 List<JoinRelType> joinTypes,
+                List<GeneratedMultiJoinCondition> outerJoinConditions,
                 boolean isFullOuterJoin) {
             this.inputSpecs = inputSpecs;
             this.dummyKeySelectors = dummyKeySelectors;
             this.inputTypeInfos = inputTypeInfos;
             this.joinTypes = joinTypes;
+            this.outerJoinConditions = outerJoinConditions;
             this.isFullOuterJoin = isFullOuterJoin;
         }
 
@@ -341,7 +331,7 @@ public abstract class StreamingMultiJoinOperatorTestBase {
                 StreamOperatorParameters<RowData> parameters) {
             StreamingMultiJoinOperator op =
                     createJoinOperator(
-                            parameters, inputSpecs, dummyKeySelectors, inputTypeInfos, joinTypes);
+                            parameters, inputSpecs, dummyKeySelectors, inputTypeInfos, joinTypes, outerJoinConditions);
             return (T) op;
         }
 
@@ -356,7 +346,8 @@ public abstract class StreamingMultiJoinOperatorTestBase {
                 List<JoinInputSideSpec> inputSpecs,
                 List<KeySelector<RowData, String>> dummyKeySelectors,
                 List<InternalTypeInfo<RowData>> inputTypeInfos,
-                List<JoinRelType> joinTypes) {
+                List<JoinRelType> joinTypes,
+                List<GeneratedMultiJoinCondition> outerJoinConditions) {
             // Create join conditions (for now just using a simple condition that always returns
             // true)
             List<GeneratedJoinCondition> generatedConditions = new ArrayList<>();
@@ -401,22 +392,21 @@ public abstract class StreamingMultiJoinOperatorTestBase {
             }
 
             // Create outer join conditions array based on outerJoinFlags
-            MultiJoinCondition[] outerJoinConditions;
-            outerJoinConditions = new MultiJoinCondition[inputSpecs.size()];
+            MultiJoinCondition[] outJoinConditions;
+            outJoinConditions = new MultiJoinCondition[inputSpecs.size()];
             for (int i = 0; i < inputSpecs.size(); i++) {
-                // todo gustavo this should ben != inner?
                 if (joinTypes.get(i) != JoinRelType.INNER) {
                     // For inputs marked as outer join, instantiate a condition
                     try {
-                        outerJoinConditions[i] =
-                                createMultiJoinOuterJoinCondition(i)
+                        outJoinConditions[i] =
+                                outerJoinConditions.get(i)
                                         .newInstance(getClass().getClassLoader());
                     } catch (Exception e) {
-                        throw new RuntimeException("Failed to instantiate outer join condition", e);
+                        throw new RuntimeException("Failed to instantiate outer join condition, make sure you're passing an outer condition for every outer join", e);
                     }
                 } else {
                     // For regular inputs, use null
-                    outerJoinConditions[i] = null;
+                    outJoinConditions[i] = null;
                 }
             }
 
@@ -431,7 +421,7 @@ public abstract class StreamingMultiJoinOperatorTestBase {
                     filterNulls,
                     retentionTime,
                     isFullOuterJoin,
-                    outerJoinConditions);
+                    outJoinConditions);
         }
 
         private GeneratedJoinCondition createJoinCondition() {
@@ -457,46 +447,6 @@ public abstract class StreamingMultiJoinOperatorTestBase {
                             + "    }\n"
                             + "}\n";
             return new GeneratedJoinCondition("ConditionFunction", funcCode, new Object[0]);
-        }
-
-        private GeneratedMultiJoinCondition createMultiJoinOuterJoinCondition(int index) {
-            String funcCode =
-                    "public class MultiOuterJoinConditionFunction extends org.apache.flink.api.common.functions.AbstractRichFunction "
-                            + "implements org.apache.flink.table.runtime.generated.MultiJoinCondition {\n"
-                            + "\n"
-                            + "    private final int compareIndex;\n"
-                            + "\n"
-                            + "    public MultiOuterJoinConditionFunction(Object[] reference) {\n"
-                            + "        this.compareIndex = "
-                            + index
-                            + ";\n"
-                            + "    }\n"
-                            + "\n"
-                            + "    @Override\n"
-                            + "    public boolean apply(org.apache.flink.table.data.RowData[] inputs) {\n"
-                            + "        // Check if we have both inputs to compare\n"
-                            + "        if (inputs == null || compareIndex < 1 || inputs[compareIndex - 1] == null || inputs[compareIndex] == null) {\n"
-                            + "            return false;\n"
-                            + "        }\n"
-                            + "\n"
-                            + "        // Check for nulls in key columns\n"
-                            + "        if (inputs[compareIndex - 1].isNullAt(0) || inputs[compareIndex].isNullAt(0)) {\n"
-                            + "            return false;\n"
-                            + "        }\n"
-                            + "\n"
-                            + "        // Compare only input[compareIndex - 1 and] with inputs[compareIndex]\n"
-                            + "        String firstKey = inputs[compareIndex - 1].getString(0).toString();\n"
-                            + "        String secondKey = inputs[compareIndex].getString(0).toString();\n"
-                            + "        return firstKey.equals(secondKey);\n"
-                            + "    }\n"
-                            + "\n"
-                            + "    @Override\n"
-                            + "    public void close() throws Exception {\n"
-                            + "        super.close();\n"
-                            + "    }\n"
-                            + "}\n";
-            return new GeneratedMultiJoinCondition(
-                    "MultiOuterJoinConditionFunction", funcCode, new Object[0]);
         }
 
         // Create a dummy MultiJoinCondition that checks if all inputs have the same join key value
@@ -576,7 +526,47 @@ public abstract class StreamingMultiJoinOperatorTestBase {
             throws Exception {
         return new KeyedMultiInputStreamOperatorTestHarness<>(
                 new MultiStreamingJoinOperatorFactory(
-                        inputSpecs, dummyKeySelectors, inputTypeInfos, joinTypes, isFullOuterJoin),
+                        inputSpecs, dummyKeySelectors, inputTypeInfos, joinTypes, outerJoinConditions, isFullOuterJoin),
                 TypeInformation.of(String.class));
+    }
+
+    protected static GeneratedMultiJoinCondition createMultiJoinOuterJoinCondition(int index, int indexToCompare) {
+        String funcCode =
+                "public class MultiOuterJoinConditionFunction extends org.apache.flink.api.common.functions.AbstractRichFunction "
+                        + "implements org.apache.flink.table.runtime.generated.MultiJoinCondition {\n"
+                        + "\n"
+                        + "    private final int index;\n"
+                        + "\n"
+                        + "    public MultiOuterJoinConditionFunction(Object[] reference) {\n"
+                        + "        this.index = "
+                        + index
+                        + ";\n"
+                        + "    }\n"
+                        + "\n"
+                        + "    @Override\n"
+                        + "    public boolean apply(org.apache.flink.table.data.RowData[] inputs) {\n"
+                        + "        // Check if we have both inputs to compare\n"
+                        + "        if (inputs == null || index < 1 || inputs["+indexToCompare+"] == null || inputs[index] == null) {\n"
+                        + "            return false;\n"
+                        + "        }\n"
+                        + "\n"
+                        + "        // Check for nulls in key columns\n"
+                        + "        if (inputs["+indexToCompare+" ].isNullAt(0) || inputs[index].isNullAt(0)) {\n"
+                        + "            return false;\n"
+                        + "        }\n"
+                        + "\n"
+                        + "        // Compare only input[indexToCompare] with inputs[index]\n"
+                        + "        String firstKey = inputs["+indexToCompare+"].getString(0).toString();\n"
+                        + "        String secondKey = inputs[index].getString(0).toString();\n"
+                        + "        return firstKey.equals(secondKey);\n"
+                        + "    }\n"
+                        + "\n"
+                        + "    @Override\n"
+                        + "    public void close() throws Exception {\n"
+                        + "        super.close();\n"
+                        + "    }\n"
+                        + "}\n";
+        return new GeneratedMultiJoinCondition(
+                "MultiOuterJoinConditionFunction", funcCode, new Object[0]);
     }
 }

@@ -1,21 +1,15 @@
 package org.apache.flink.table.runtime.operators.join.stream;
 
+import org.apache.calcite.rel.core.JoinRelType;
+import org.apache.flink.table.runtime.generated.GeneratedMultiJoinCondition;
 import org.apache.flink.testutils.junit.extensions.parameterized.Parameter;
 import org.apache.flink.testutils.junit.extensions.parameterized.ParameterizedTestExtension;
 import org.apache.flink.testutils.junit.extensions.parameterized.Parameters;
-
-import org.apache.calcite.rel.core.JoinRelType;
 import org.junit.jupiter.api.TestTemplate;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.Arrays;
 import java.util.List;
-
-import static org.apache.flink.table.runtime.util.StreamRecordUtils.*;
-import static org.apache.flink.types.RowKind.DELETE;
-import static org.apache.flink.types.RowKind.INSERT;
-import static org.apache.flink.types.RowKind.UPDATE_AFTER;
-import static org.apache.flink.types.RowKind.UPDATE_BEFORE;
 
 @ExtendWith(ParameterizedTestExtension.class)
 class StreamingTwoWayInnerMultiJoinOperatorTest extends StreamingMultiJoinOperatorTestBase {
@@ -29,7 +23,7 @@ class StreamingTwoWayInnerMultiJoinOperatorTest extends StreamingMultiJoinOperat
 
     public StreamingTwoWayInnerMultiJoinOperatorTest() {
         // For inner join test, set outerJoinFlags to false for all inputs
-        super(2, List.of(JoinRelType.INNER, JoinRelType.INNER), false);
+        super(2, List.of(JoinRelType.INNER, JoinRelType.INNER), defaultConditions(), false);
     }
 
     /** SELECT u.*, o.* FROM Users u INNER JOIN Orders o ON u.id = o.user_id */
@@ -122,7 +116,7 @@ class StreamingTwoWayOuterMultiJoinOperatorTest extends StreamingMultiJoinOperat
 
     public StreamingTwoWayOuterMultiJoinOperatorTest() {
         // For outer join test, set outerJoinFlags to true for all inputs to test full outer join
-        super(2, List.of(JoinRelType.INNER, JoinRelType.LEFT), false);
+        super(2, List.of(JoinRelType.INNER, JoinRelType.LEFT), defaultConditions(), false);
     }
 
     /**
@@ -291,7 +285,7 @@ class StreamingThreeWayJoinOperatorTest extends StreamingMultiJoinOperatorTestBa
 
     public StreamingThreeWayJoinOperatorTest() {
         // For inner join test, set outerJoinFlags to false for all inputs
-        super(3, List.of(JoinRelType.INNER, JoinRelType.INNER, JoinRelType.INNER), false);
+        super(3, List.of(JoinRelType.INNER, JoinRelType.INNER, JoinRelType.INNER), defaultConditions(), false);
     }
 
     /**
@@ -500,13 +494,16 @@ class StreamingThreeWayOuterJoinOperatorTest extends StreamingMultiJoinOperatorT
     @Parameter private boolean enableAsyncState;
 
     public StreamingThreeWayOuterJoinOperatorTest() {
-        super(3, List.of(JoinRelType.INNER, JoinRelType.LEFT, JoinRelType.LEFT), false);
+        super(3, List.of(JoinRelType.INNER, JoinRelType.LEFT, JoinRelType.LEFT), defaultConditions(), false);
     }
 
     /**
-     * SELECT u.*, o.*, p.* FROM Users u LEFT OUTER JOIN Orders o ON u.id = o.user_id LEFT OUTER
-     * JOIN Payments p ON u.id = p.user_id -- Test three-way left outer join with nulls and
-     * transitions
+     * -- Test three-way left outer join with nulls and changelog transitions
+     *
+     * SQL: SELECT u.*, o.*, p.* FROM Users u LEFT OUTER JOIN Orders o ON u.user_id = o.user_id LEFT OUTER
+     * JOIN Payments p ON o.user_id = p.user_id
+     *
+     * Schema: Users(user_id PRIMARY KEY, name, details) Orders(user_id, order_id PRIMARY KEY, name) Payments(user_id, payment_id PRIMARY KEY, name)
      */
     @TestTemplate
     void testThreeWayLeftOuterJoin() throws Exception {
@@ -732,7 +729,7 @@ class StreamingThreeWayOuterJoinOperatorTest extends StreamingMultiJoinOperatorT
                                 "Order 1 Details",
                                 "1",
                                 "payment_1",
-                                "Payment 1 Details"), // TODO gustavo what if my join matches 1 2
+                                "Payment 1 Details"),
                 // and 1 and 3 in the conditions? payments
                 // would still show up?
                 INSERT,
@@ -955,7 +952,285 @@ class StreamingThreeWayOuterJoinOperatorTest extends StreamingMultiJoinOperatorT
                 INSERT,
                 r("2", "Bob", "User 2 Details", null, null, null, null, null, null));
 
-        // Delete payment next
-        deletePayment("2", "payment_3", "Payment 3 Details");
+        insertOrder("2", "order_2", "Order 2 Details");
+        emits(
+                DELETE,
+                r("2", "Bob", "User 2 Details", null, null, null, null, null, null),
+                INSERT,
+                r(
+                        "2",
+                        "Bob",
+                        "User 2 Details",
+                        "2",
+                        "order_2",
+                        "Order 2 Details",
+                        "2",
+                        "payment_4",
+                        "Payment 4 Details"),
+                INSERT,
+                r(
+                        "2",
+                        "Bob",
+                        "User 2 Details",
+                        "2",
+                        "order_2",
+                        "Order 2 Details",
+                        "2",
+                        "payment_3",
+                        "Payment 3 Details"));
+
+        insertOrder("2", "order_3", "Order 3 Details");
+        emits(
+                INSERT,
+                r(
+                        "2",
+                        "Bob",
+                        "User 2 Details",
+                        "2",
+                        "order_3",
+                        "Order 3 Details",
+                        "2",
+                        "payment_4",
+                        "Payment 4 Details"),
+                INSERT,
+                r(
+                        "2",
+                        "Bob",
+                        "User 2 Details",
+                        "2",
+                        "order_3",
+                        "Order 3 Details",
+                        "2",
+                        "payment_3",
+                        "Payment 3 Details"));
+
+        updateAfterPayment("2", "payment_4", "Payment 4 Details Updated");
+        emits(
+                UPDATE_AFTER,
+                r(
+                        "2",
+                        "Bob",
+                        "User 2 Details",
+                        "2",
+                        "order_2",
+                        "Order 2 Details",
+                        "2",
+                        "payment_4",
+                        "Payment 4 Details Updated"),
+                UPDATE_AFTER,
+                r(
+                        "2",
+                        "Bob",
+                        "User 2 Details",
+                        "2",
+                        "order_3",
+                        "Order 3 Details",
+                        "2",
+                        "payment_4",
+                        "Payment 4 Details Updated"));
+
+        updateAfterUser("2", "Bob", "User 2 Details Updated");
+        emits(
+                UPDATE_AFTER,
+                r(
+                        "2",
+                        "Bob",
+                        "User 2 Details Updated",
+                        "2",
+                        "order_2",
+                        "Order 2 Details",
+                        "2",
+                        "payment_4",
+                        "Payment 4 Details Updated"),
+                UPDATE_AFTER,
+                r(
+                        "2",
+                        "Bob",
+                        "User 2 Details Updated",
+                        "2",
+                        "order_2",
+                        "Order 2 Details",
+                        "2",
+                        "payment_3",
+                        "Payment 3 Details"),
+                UPDATE_AFTER,
+                r(
+                        "2",
+                        "Bob",
+                        "User 2 Details Updated",
+                        "2",
+                        "order_3",
+                        "Order 3 Details",
+                        "2",
+                        "payment_4",
+                        "Payment 4 Details Updated"),
+                UPDATE_AFTER,
+                r(
+                        "2",
+                        "Bob",
+                        "User 2 Details Updated",
+                        "2",
+                        "order_3",
+                        "Order 3 Details",
+                        "2",
+                        "payment_3",
+                        "Payment 3 Details"));
+
+        deleteUser("2", "Bob", "User 2 Details");
+        emits(
+                DELETE,
+                r(
+                        "2",
+                        "Bob",
+                        "User 2 Details",
+                        "2",
+                        "order_2",
+                        "Order 2 Details",
+                        "2",
+                        "payment_4",
+                        "Payment 4 Details Updated"),
+                DELETE,
+                r(
+                        "2",
+                        "Bob",
+                        "User 2 Details",
+                        "2",
+                        "order_2",
+                        "Order 2 Details",
+                        "2",
+                        "payment_3",
+                        "Payment 3 Details"),
+                DELETE,
+                r(
+                        "2",
+                        "Bob",
+                        "User 2 Details",
+                        "2",
+                        "order_3",
+                        "Order 3 Details",
+                        "2",
+                        "payment_4",
+                        "Payment 4 Details Updated"),
+                DELETE,
+                r(
+                        "2",
+                        "Bob",
+                        "User 2 Details",
+                        "2",
+                        "order_3",
+                        "Order 3 Details",
+                        "2",
+                        "payment_3",
+                        "Payment 3 Details"));
+
+    }
+}
+
+@ExtendWith(ParameterizedTestExtension.class)
+class StreamingThreeWayOuterJoinCustomConditionOperatorTest extends StreamingMultiJoinOperatorTestBase {
+
+    @Parameters(name = "enableAsyncState = {0}")
+    public static List<Boolean> enableAsyncState() {
+        return Arrays.asList(false);
+    }
+
+    @Parameter private boolean enableAsyncState;
+
+    // This condition joins ON user.user_id = payment.user_id instead of ON order.user_id = payment.user_id
+    private static final List<GeneratedMultiJoinCondition> customJoinCondition = Arrays.asList(
+            null,
+            createMultiJoinOuterJoinCondition(1, 0),
+            createMultiJoinOuterJoinCondition(2, 0));
+
+    public StreamingThreeWayOuterJoinCustomConditionOperatorTest() {
+        super(3, List.of(JoinRelType.INNER, JoinRelType.LEFT, JoinRelType.LEFT),
+                customJoinCondition, false);
+    }
+
+    /**
+     * -- Test three-way left outer join with nulls and changelog transitions
+     *
+     * SQL: SELECT u.*, o.*, p.* FROM Users u LEFT OUTER JOIN Orders o ON u.user_id = o.user_id LEFT OUTER
+     * JOIN Payments p ON u.user_id = p.user_id <- This is the core difference here
+     *
+     * Schema: Users(user_id PRIMARY KEY, name, details) Orders(user_id, order_id PRIMARY KEY, name) Payments(user_id, payment_id PRIMARY KEY, name)
+     */
+    @TestTemplate
+    void testThreeWayLeftOuterJoinCustomCondition() throws Exception {
+        /* -------- LEFT OUTER JOIN APPEND TESTS ----------- */
+
+        // Users without orders/payments are emitted with nulls
+        insertPayment("1", "payment_1", "Payment 1 Details");
+        emitsNothing();
+
+        insertOrder("1", "order_1", "Order 1 Details");
+        emitsNothing();
+
+        // Add matching user and emits full join
+        insertUser("1", "Gus", "User 1 Details");
+        emits(
+                INSERT,
+                r(
+                        "1",
+                        "Gus",
+                        "User 1 Details",
+                        "1",
+                        "order_1",
+                        "Order 1 Details",
+                        "1",
+                        "payment_1",
+                        "Payment 1 Details"));
+
+        /* -------- ORDER UPDATE TESTS ----------- */
+
+        // -U on order emits -U and temporarily reverts to left+null join
+        updateBeforeOrder("1", "order_1", "Order 1 Details");
+        emits(
+                UPDATE_BEFORE,
+                r(
+                        "1",
+                        "Gus",
+                        "User 1 Details",
+                        "1",
+                        "order_1",
+                        "Order 1 Details",
+                        "1",
+                        "payment_1",
+                        "Payment 1 Details"),
+                // and 1 and 3 in the conditions? payments
+                // would still show up?
+                INSERT,
+                r(
+                        "1",
+                        "Gus",
+                        "User 1 Details",
+                        null,
+                        null,
+                        null,
+                        "1",
+                        "payment_1",
+                        "Payment 1 Details"));
+
+        // +U on order removes null result and emits join
+        updateAfterOrder("1", "order_1", "Order 1 Details Updated");
+        emits(
+                DELETE, r(
+                        "1", "Gus", "User 1 Details",
+                        null, null, null,
+                        "1",
+                        "payment_1",
+                        "Payment 1 Details"),
+                UPDATE_AFTER,
+                r(
+                        "1",
+                        "Gus",
+                        "User 1 Details",
+                        "1",
+                        "order_1",
+                        "Order 1 Details Updated",
+                        "1",
+                        "payment_1",
+                        "Payment 1 Details"));
+
     }
 }
