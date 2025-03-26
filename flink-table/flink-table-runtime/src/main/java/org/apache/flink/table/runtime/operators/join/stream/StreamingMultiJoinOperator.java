@@ -269,9 +269,6 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             return;
         }
 
-        // Get iterables for all inputs without modifying state
-        List<JoinRecordIterator> allInputRecords = getAllInputRecords();
-
         // Array to track number of matches for each input to the right
         int[] matches = new int[inputSpecs.size()];
         Arrays.fill(matches, 0);
@@ -285,20 +282,9 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
                 input,
                 inputId,
                 currentRows,
-                allInputRecords,
                 matches,
                 true,
                 false);
-    }
-
-    /** Gets iterators for all inputs without creating singletons. */
-    private List<JoinRecordIterator> getAllInputRecords() throws Exception {
-        List<JoinRecordIterator> allInputRecords = new ArrayList<>(inputSpecs.size());
-        for (int i = 0; i < inputSpecs.size(); i++) {
-            JoinRecordIterator records = stateHandlers.get(i).getRecordsWithAssociations();
-            allInputRecords.add(records);
-        }
-        return allInputRecords;
     }
 
     /**
@@ -309,7 +295,6 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             RowData input,
             int inputId,
             RowData[] currentRows,
-            List<JoinRecordIterator> allInputRecords,
             int[] matches,
             boolean isUpsert,
             boolean shouldEmit)
@@ -321,20 +306,20 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
 
         boolean isLeftJoin = isLeftJoinAtDepth(depth);
         boolean depthMatched = processExistingRecords(
-                depth, input, inputId, currentRows, allInputRecords, 
+                depth, input, inputId, currentRows,
                 matches, isUpsert, shouldEmit, isLeftJoin);
 
         // If we have no matches with existing records, try with null padding for left joins
         if (isLeftJoin && !depthMatched && matches[depth - 1] == 0) {
             depthMatched = processWithNullPadding(
-                    depth, input, inputId, currentRows, allInputRecords,
+                    depth, input, inputId, currentRows,
                     matches, isUpsert, shouldEmit);
         }
 
         // Process the actual input record if we're at the right depth
         if (depth == inputId) {
             depthMatched = processInputRecord(
-                    depth, input, inputId, currentRows, allInputRecords,
+                    depth, input, inputId, currentRows,
                     matches, isUpsert);
         }
 
@@ -371,8 +356,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
      */
     private boolean processExistingRecords(
             int depth, RowData input, int inputId, RowData[] currentRows,
-            List<JoinRecordIterator> allInputRecords, int[] matches,
-            boolean isUpsert, boolean shouldEmit, boolean isLeftJoin) throws Exception {
+            int[] matches, boolean isUpsert, boolean shouldEmit, boolean isLeftJoin) throws Exception {
         
         boolean depthMatched = false;
         JoinRecordIterator recordIterator = stateHandlers.get(depth).getRecordsWithAssociations();
@@ -398,7 +382,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             }
             
             boolean matched = recursiveMultiJoin(
-                    depth + 1, input, inputId, currentRows, allInputRecords,
+                    depth + 1, input, inputId, currentRows,
                     matches, isUpsert, shouldEmit);
 
             if (matched) {
@@ -414,15 +398,14 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
      */
     private boolean processWithNullPadding(
             int depth, RowData input, int inputId, RowData[] currentRows,
-            List<JoinRecordIterator> allInputRecords, int[] matches,
-            boolean isUpsert, boolean shouldEmit) throws Exception {
+            int[] matches, boolean isUpsert, boolean shouldEmit) throws Exception {
         
         // There were no matches, we try with null padding
         currentRows[depth] = nullRows.get(depth);
 
         // Call recursive join again with null-padded row to get correct matches
         boolean depthMatched = recursiveMultiJoin(
-                depth + 1, input, inputId, currentRows, allInputRecords,
+                depth + 1, input, inputId, currentRows,
                 matches, isUpsert, shouldEmit);
         
         return depthMatched;
@@ -433,8 +416,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
      */
     private boolean processInputRecord(
             int depth, RowData input, int inputId, RowData[] currentRows,
-            List<JoinRecordIterator> allInputRecords, int[] matches,
-            boolean isUpsert) throws Exception {
+            int[] matches, boolean isUpsert) throws Exception {
         
         boolean depthMatched = false;
         boolean isLeftJoin = isLeftJoinAtDepth(depth);
@@ -444,7 +426,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         // Handle retraction of previous null-padded results if needed
         if (inputIsUpsert && isLeftJoin && matches[depth - 1] == 0) {
             depthMatched = handleRetractBeforeInput(
-                    depth, input, inputId, currentRows, allInputRecords,
+                    depth, input, inputId, currentRows,
                     matches);
         }
 
@@ -464,13 +446,13 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         // Continue recursive join with the actual input
         input.setRowKind(inputRowKind);
         depthMatched = recursiveMultiJoin(
-                depth + 1, input, inputId, currentRows, allInputRecords,
+                depth + 1, input, inputId, currentRows,
                 matches, inputIsUpsert, true);
 
         // Handle insertion of new null-padded results if needed
         if (!inputIsUpsert && isLeftJoin && matches[depth - 1] == 0) {
             depthMatched = handleInsertAfterInput(
-                    depth, input, inputId, currentRows, allInputRecords,
+                    depth, input, inputId, currentRows,
                     matches);
         }
 
@@ -485,8 +467,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
      */
     private boolean handleRetractBeforeInput(
             int depth, RowData input, int inputId, RowData[] currentRows,
-            List<JoinRecordIterator> allInputRecords, int[] matches) 
-            throws Exception {
+            int[] matches) throws Exception {
         
         // Set null padding for retraction
         currentRows[depth] = nullRows.get(depth);
@@ -497,7 +478,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         
         // Process the retraction
         boolean depthMatched = recursiveMultiJoin(
-                depth + 1, input, inputId, currentRows, allInputRecords,
+                depth + 1, input, inputId, currentRows,
                 matches, false, true);
         
         // Restore original row kind
@@ -511,8 +492,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
      */
     private boolean handleInsertAfterInput(
             int depth, RowData input, int inputId, RowData[] currentRows,
-            List<JoinRecordIterator> allInputRecords, int[] matches) 
-            throws Exception {
+            int[] matches) throws Exception {
         
         // Set null padding for insertion
         currentRows[depth] = nullRows.get(depth);
@@ -523,7 +503,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         
         // Process the insertion
         boolean depthMatched = recursiveMultiJoin(
-                depth + 1, input, inputId, currentRows, allInputRecords,
+                depth + 1, input, inputId, currentRows,
                 matches, true, true);
         
         // Restore original row kind
@@ -643,3 +623,4 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         return depth > 0 && joinTypes.get(depth) == JoinRelType.LEFT;
     }
 }
+
