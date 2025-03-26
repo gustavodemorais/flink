@@ -26,8 +26,6 @@ import org.apache.calcite.rel.core.JoinRelType;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
-import java.util.Iterator;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,9 +64,17 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
     private final List<KeySelector<RowData, String>> dummyKeySelectors;
 
     /**
-     * Constructor that supports binary join conditions, a multi-way join condition, and outer join
-     * conditions. If multiJoinCondition is provided, it will be used instead of binary join
-     * conditions.
+     * Represents the different phases of the join process.
+     */
+    private enum JoinPhase {
+        /** Phase where we calculate match counts (associations) without emitting results */
+        CALCULATE_ASSOCIATIONS,
+        /** Phase where we emit the actual join results */
+        EMIT_RESULTS
+    }
+
+    /**
+     * Constructor for the multi way joing operator
      */
 
     /*
@@ -193,58 +199,48 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             return;
         }
 
-        // Array to track number of matches for each input to the right
-        int[] matches = new int[inputSpecs.size()];
-        Arrays.fill(matches, 0);
-
-        // Create a row array to build our join result
+        int[] associations = createInitialAssociations();
         RowData[] currentRows = new RowData[inputSpecs.size()];
 
-        // Process the whole join
         recursiveMultiJoin(
                 0,
                 input,
                 inputId,
                 currentRows,
-                matches,
-                true,
-                false);
+                associations,
+                JoinPhase.CALCULATE_ASSOCIATIONS);
     }
 
     /**
-     * Recursively processes join operations, building rows depth by depth and tracking matches.
+     * Recursively processes join operations, building rows depth by depth and tracking associations.
      */
     private boolean recursiveMultiJoin(
             int depth,
             RowData input,
             int inputId,
             RowData[] currentRows,
-            int[] matches,
-            boolean isUpsert,
-            boolean shouldEmit)
+            int[] associations,
+            JoinPhase phase)
             throws Exception {
-        // If we've reached the maximum depth, we can emit the row if conditions are met
         if (depth == inputSpecs.size()) {
-            return processJoinAtMaxDepth(depth, input, currentRows, isUpsert, shouldEmit);
+            return processJoinAtMaxDepth(depth, input, currentRows, phase);
         }
 
         boolean isLeftJoin = isLeftJoinAtDepth(depth);
         boolean depthMatched = processExistingRecords(
                 depth, input, inputId, currentRows,
-                matches, isUpsert, shouldEmit, isLeftJoin);
+                associations, phase, isLeftJoin);
 
-        // If we have no matches with existing records, try with null padding for left joins
-        if (isLeftJoin && !depthMatched && matches[depth - 1] == 0) {
+        if (isLeftJoin && !depthMatched && associations[depth - 1] == 0) {
             depthMatched = processWithNullPadding(
                     depth, input, inputId, currentRows,
-                    matches, isUpsert, shouldEmit);
+                    associations, phase);
         }
 
-        // Process the actual input record if we're at the right depth
         if (depth == inputId) {
             depthMatched = processInputRecord(
                     depth, input, inputId, currentRows,
-                    matches, isUpsert);
+                    associations);
         }
 
         return depthMatched;
@@ -255,22 +251,18 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
      */
     private boolean processJoinAtMaxDepth(
             int depth, RowData input, RowData[] currentRows, 
-            boolean isUpsert, boolean shouldEmit) {
+            JoinPhase phase) {
         
-        // Check if this is a left join at the last level
-        boolean isLeftJoin = depth > 0 && joinTypes.get(depth - 1) == JoinRelType.LEFT;
+        boolean isLeftJoin = isLeftJoinAtLastLevel(depth);
 
-        // For inner joins, check the condition
         if (!isLeftJoin && !multiJoinCondition.apply(currentRows)) {
             return false;
         }
 
-        // If we're just calculating matches and not emitting, return success
-        if (!shouldEmit) {
+        if (phase == JoinPhase.CALCULATE_ASSOCIATIONS) {
             return true;
         }
 
-        // Emit the matching row 
         emitRow(input.getRowKind(), currentRows);
         return true;
     }
@@ -280,34 +272,32 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
      */
     private boolean processExistingRecords(
             int depth, RowData input, int inputId, RowData[] currentRows,
-            int[] matches, boolean isUpsert, boolean shouldEmit, boolean isLeftJoin) throws Exception {
+            int[] associations, JoinPhase phase, boolean isLeftJoin) throws Exception {
         
         boolean depthMatched = false;
         JoinRecordIterator recordIterator = stateHandlers.get(depth).getRecordsWithAssociations();
 
-        // Process each record at this depth
         while (recordIterator.hasNext()) {
-            // Get the next record at this depth
             currentRows[depth] = recordIterator.next();
 
-            // For outer joins, check the condition
             if (isLeftJoin) {
-                if (!checkJoinCondition(depth, currentRows)) {
+                if (!matchesOuterCondition(depth, currentRows)) {
                     continue;
                 }
                 
-                // Update match counts if condition is satisfied
-                updateMatchCount(depth, matches, isUpsert);
+                // During calculation phase, we always increment associations
+                // During emission phase, we increment for upserts and decrement for retractions
+                boolean shouldIncrement = phase == JoinPhase.CALCULATE_ASSOCIATIONS || isUpsert(input);
+                updateAssociationCount(depth, associations, shouldIncrement);
             }
 
-            // Reset match count and continue recursively
             if (isLeftJoin) {
-                matches[depth] = 0;
+                associations[depth] = 0;
             }
             
             boolean matched = recursiveMultiJoin(
                     depth + 1, input, inputId, currentRows,
-                    matches, isUpsert, shouldEmit);
+                    associations, phase);
 
             if (matched) {
                 depthMatched = true;
@@ -318,21 +308,14 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
     }
 
     /**
-     * Process with null padding when no matches are found in a left join.
+     * Process with null padding when no associations are found in a left join.
      */
     private boolean processWithNullPadding(
             int depth, RowData input, int inputId, RowData[] currentRows,
-            int[] matches, boolean isUpsert, boolean shouldEmit) throws Exception {
+            int[] associations, JoinPhase phase) throws Exception {
         
-        // There were no matches, we try with null padding
         currentRows[depth] = nullRows.get(depth);
-
-        // Call recursive join again with null-padded row to get correct matches
-        boolean depthMatched = recursiveMultiJoin(
-                depth + 1, input, inputId, currentRows,
-                matches, isUpsert, shouldEmit);
-        
-        return depthMatched;
+        return recursiveMultiJoin(depth + 1, input, inputId, currentRows, associations, phase);
     }
 
     /**
@@ -340,49 +323,39 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
      */
     private boolean processInputRecord(
             int depth, RowData input, int inputId, RowData[] currentRows,
-            int[] matches, boolean isUpsert) throws Exception {
+            int[] associations) throws Exception {
         
         boolean depthMatched = false;
         boolean isLeftJoin = isLeftJoinAtDepth(depth);
-        boolean inputIsUpsert = isUpsert(input);
         RowKind inputRowKind = input.getRowKind();
         
-        // Handle retraction of previous null-padded results if needed
-        if (inputIsUpsert && isLeftJoin && matches[depth - 1] == 0) {
+        if (isUpsert(input) && isLeftJoin && associations[depth - 1] == 0) {
             depthMatched = handleRetractBeforeInput(
                     depth, input, inputId, currentRows,
-                    matches);
+                    associations);
         }
 
-        // Process with the actual input
         currentRows[depth] = input;
         
-        // Check left join condition if needed
         if (isLeftJoin) {
-            if (!checkJoinCondition(depth, currentRows)) {
+            if (!matchesOuterCondition(depth, currentRows)) {
                 return false;
             }
-            
-            // Update match counts if condition is satisfied
-            updateMatchCount(depth, matches, inputIsUpsert);
+            updateAssociationCount(depth, associations, isUpsert(input));
         }
 
-        // Continue recursive join with the actual input
         input.setRowKind(inputRowKind);
         depthMatched = recursiveMultiJoin(
                 depth + 1, input, inputId, currentRows,
-                matches, inputIsUpsert, true);
+                associations, JoinPhase.EMIT_RESULTS);
 
-        // Handle insertion of new null-padded results if needed
-        if (!inputIsUpsert && isLeftJoin && matches[depth - 1] == 0) {
+        if (!isUpsert(input) && isLeftJoin && associations[depth - 1] == 0) {
             depthMatched = handleInsertAfterInput(
                     depth, input, inputId, currentRows,
-                    matches);
+                    associations);
         }
 
-        // Restore original row kind
         input.setRowKind(inputRowKind);
-        
         return depthMatched;
     }
 
@@ -391,23 +364,17 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
      */
     private boolean handleRetractBeforeInput(
             int depth, RowData input, int inputId, RowData[] currentRows,
-            int[] matches) throws Exception {
+            int[] associations) throws Exception {
         
-        // Set null padding for retraction
         currentRows[depth] = nullRows.get(depth);
-        
-        // Temporarily change row kind for retraction
         RowKind originalKind = input.getRowKind();
         input.setRowKind(RowKind.DELETE);
         
-        // Process the retraction
         boolean depthMatched = recursiveMultiJoin(
                 depth + 1, input, inputId, currentRows,
-                matches, false, true);
+                associations, JoinPhase.EMIT_RESULTS);
         
-        // Restore original row kind
         input.setRowKind(originalKind);
-        
         return depthMatched;
     }
 
@@ -416,23 +383,17 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
      */
     private boolean handleInsertAfterInput(
             int depth, RowData input, int inputId, RowData[] currentRows,
-            int[] matches) throws Exception {
+            int[] associations) throws Exception {
         
-        // Set null padding for insertion
         currentRows[depth] = nullRows.get(depth);
-        
-        // Temporarily change row kind for insertion
         RowKind originalKind = input.getRowKind();
         input.setRowKind(RowKind.INSERT);
         
-        // Process the insertion
         boolean depthMatched = recursiveMultiJoin(
                 depth + 1, input, inputId, currentRows,
-                matches, true, true);
+                associations, JoinPhase.EMIT_RESULTS);
         
-        // Restore original row kind
         input.setRowKind(originalKind);
-        
         return depthMatched;
     }
 
@@ -443,22 +404,22 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
      * @param currentRows the array of rows being processed
      * @return true if the join condition is satisfied, false otherwise
      */
-    private boolean checkJoinCondition(int depth, RowData[] currentRows) {
+    private boolean matchesOuterCondition(int depth, RowData[] currentRows) {
         return outerJoinConditions[depth].apply(currentRows);
     }
     
     /**
-     * Update the match count for the given depth based on the operation type.
+     * Update the association count for the given depth based on the operation type.
      * 
      * @param depth the current processing depth
-     * @param matches the array of match counts to update
+     * @param associations the array of association counts to update
      * @param isUpsert true if this is an upsert operation, false for retractions
      */
-    private void updateMatchCount(int depth, int[] matches, boolean isUpsert) {
+    private void updateAssociationCount(int depth, int[] associations, boolean isUpsert) {
         if (isUpsert) {
-            matches[depth - 1]++;
+            associations[depth - 1]++;
         } else {
-            matches[depth - 1]--;
+            associations[depth - 1]--;
         }
     }
 
@@ -536,6 +497,16 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
      */
     private boolean isLeftJoinAtDepth(int depth) {
         return depth > 0 && joinTypes.get(depth) == JoinRelType.LEFT;
+    }
+
+    private boolean isLeftJoinAtLastLevel(int depth) {
+        return depth > 0 && joinTypes.get(depth - 1) == JoinRelType.LEFT;
+    }
+
+    private int[] createInitialAssociations() {
+        int[] associations = new int[inputSpecs.size()];
+        Arrays.fill(associations, 0);
+        return associations;
     }
 }
 
