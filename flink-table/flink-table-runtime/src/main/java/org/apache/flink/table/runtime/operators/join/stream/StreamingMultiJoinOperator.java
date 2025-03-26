@@ -68,7 +68,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
      */
     private enum JoinPhase {
         /** Phase where we calculate match counts (associations) without emitting results */
-        CALCULATE_ASSOCIATIONS,
+        CALCULATE_MATCHES,
         /** Phase where we emit the actual join results */
         EMIT_RESULTS
     }
@@ -118,59 +118,211 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
     @Override
     public void open() throws Exception {
         super.open();
+        initializeCollector();
+        initializeNullRows();
+        initializeStateHandlers();
+        initializeCleanupState();
+    }
 
-        // Initialize collector
-        this.collector = new TimestampedCollector<>(output);
-
-        // Initialize null rows for outer joins
-        this.nullRows = new ArrayList<>(inputTypes.size());
-        for (InternalTypeInfo<RowData> inputType : inputTypes) {
-            this.nullRows.add(new GenericRowData(inputType.toRowType().getFieldCount()));
-        }
-
-        // Initialize state handlers for each input
-        this.stateHandlers = new ArrayList<>(inputSpecs.size());
-
-        // Initialize inputs
-        for (int i = 0; i < inputSpecs.size(); i++) {
-            MultiJoinStateHandler handler =
-                    new MultiOuterJoinStateHandler(
-                            i,
-                            this,
-                            dummyKeySelectors.get(i),
-                            this.stateHandler,
-                            getOperatorConfig().getConfiguration(),
-                            getUserCodeClassloader(),
-                            inputSpecs.get(i),
-                            inputTypes.get(i),
-                            stateRetentionTime[i]);
-            stateHandlers.add(handler);
-            inputs.add(createInput(i + 1));
-        }
-
-        // Initialize cleanup time state
-        ValueStateDescriptor<Long> cleanupTimeDescriptor =
-                new ValueStateDescriptor<>("cleanup-time", Types.LONG);
-        // todo this.cleanupTimeState = getRuntimeContext().getState(cleanupTimeDescriptor);
+    @Override
+    public void close() throws Exception {
+        closeConditions();
+        super.close();
     }
 
     public void processElement(int inputId, StreamRecord<RowData> element) throws Exception {
         RowData input = element.getValue();
         long timestamp = element.getTimestamp();
-
         processElement(inputId, input, timestamp);
     }
 
     private void processElement(int inputId, RowData input, long timestamp) throws Exception {
         inputId = inputId - 1; // Convert to 0-based index
 
-        // First perform the join
+        // We perform the multi-way join for the input streams
         performMultiJoin(input, inputId);
 
-        // Then add the record to state for future joins
         addRecordToState(inputId, input);
+        updateCleanupTime(timestamp);
+    }
 
-        // todo gustavo updateCleanupTime(timestamp);
+    private void performMultiJoin(RowData input, int inputId) throws Exception {
+        if (input == null) {
+            return;
+        }
+
+        int[] associations = createInitialAssociations();
+        RowData[] currentRows = new RowData[inputSpecs.size()];
+
+        recursiveMultiJoin(
+                0,
+                input,
+                inputId,
+                currentRows,
+                associations,
+                JoinPhase.CALCULATE_MATCHES);
+    }
+
+    private boolean recursiveMultiJoin(
+            int depth,
+            RowData input,
+            int inputId,
+            RowData[] currentRows,
+            int[] associations,
+            JoinPhase phase)
+            throws Exception {
+        if (depth == inputSpecs.size()) {
+            return processJoinAtMaxDepth(depth, input, currentRows, phase);
+        }
+
+        boolean isLeftJoin = isLeftJoinAtDepth(depth);
+        boolean matched = processExistingRecords(
+                depth, input, inputId, currentRows,
+                associations, phase, isLeftJoin);
+
+        if (isLeftJoin && !matched && associations[depth - 1] == 0) {
+            matched = processWithNullPadding(
+                    depth, input, inputId, currentRows,
+                    associations, phase);
+        }
+
+        if (depth == inputId) {
+            matched = processInputRecord(
+                    depth, input, inputId, currentRows,
+                    associations);
+        }
+
+        return matched;
+    }
+
+    private boolean processJoinAtMaxDepth(
+            int depth, RowData input, RowData[] currentRows, 
+            JoinPhase phase) {
+        
+        boolean isLeftJoin = isLeftJoinAtLastLevel(depth);
+
+        if (!isLeftJoin && !multiJoinCondition.apply(currentRows)) {
+            return false;
+        }
+
+        if (phase == JoinPhase.CALCULATE_MATCHES) {
+            return true;
+        }
+
+        emitRow(input.getRowKind(), currentRows);
+        return true;
+    }
+
+    private boolean processExistingRecords(
+            int depth, RowData input, int inputId, RowData[] currentRows,
+            int[] associations, JoinPhase phase, boolean isLeftJoin) throws Exception {
+        
+        boolean matched = false;
+        JoinRecordIterator recordIterator = stateHandlers.get(depth).getRecordsWithAssociations();
+
+        while (recordIterator.hasNext()) {
+            currentRows[depth] = recordIterator.next();
+
+            if (isLeftJoin) {
+                if (!matchesOuterCondition(depth, currentRows)) {
+                    continue;
+                }
+
+                updateAssociationCount(depth, associations, shouldIncrementAssociation(phase, input));
+            }
+
+            if (isLeftJoin) {
+                associations[depth] = 0;
+            }
+
+            boolean matched2 = recursiveMultiJoin(
+                    depth + 1, input, inputId, currentRows,
+                    associations, phase);
+
+            if (matched2) {
+                matched = true;
+            }
+        }
+
+        return matched;
+    }
+
+    private boolean processWithNullPadding(
+            int depth, RowData input, int inputId, RowData[] currentRows,
+            int[] associations, JoinPhase phase) throws Exception {
+
+        currentRows[depth] = nullRows.get(depth);
+        return recursiveMultiJoin(depth + 1, input, inputId, currentRows, associations, phase);
+    }
+
+    private boolean processInputRecord(
+            int depth, RowData input, int inputId, RowData[] currentRows,
+            int[] associations) throws Exception {
+
+        boolean matched = false;
+        boolean isLeftJoin = isLeftJoinAtDepth(depth);
+        RowKind inputRowKind = input.getRowKind();
+
+        if (isUpsert(input) && isLeftJoin && associations[depth - 1] == 0) {
+            matched = handleRetractBeforeInput(
+                    depth, input, inputId, currentRows,
+                    associations);
+        }
+
+        currentRows[depth] = input;
+
+        if (isLeftJoin) {
+            if (!matchesOuterCondition(depth, currentRows)) {
+                return false;
+            }
+            updateAssociationCount(depth, associations, shouldIncrementAssociation(JoinPhase.EMIT_RESULTS, input));
+        }
+
+        input.setRowKind(inputRowKind);
+        matched = recursiveMultiJoin(
+                depth + 1, input, inputId, currentRows,
+                associations, JoinPhase.EMIT_RESULTS);
+
+        if (!isUpsert(input) && isLeftJoin && associations[depth - 1] == 0) {
+            matched = handleInsertAfterInput(
+                    depth, input, inputId, currentRows,
+                    associations);
+        }
+
+        input.setRowKind(inputRowKind);
+        return matched;
+    }
+
+    private boolean handleRetractBeforeInput(
+            int depth, RowData input, int inputId, RowData[] currentRows,
+            int[] associations) throws Exception {
+
+        currentRows[depth] = nullRows.get(depth);
+        RowKind originalKind = input.getRowKind();
+        input.setRowKind(RowKind.DELETE);
+
+        boolean matched = recursiveMultiJoin(
+                depth + 1, input, inputId, currentRows,
+                associations, JoinPhase.EMIT_RESULTS);
+
+        input.setRowKind(originalKind);
+        return matched;
+    }
+
+    private boolean handleInsertAfterInput(
+            int depth, RowData input, int inputId, RowData[] currentRows,
+            int[] associations) throws Exception {
+
+        currentRows[depth] = nullRows.get(depth);
+        RowKind originalKind = input.getRowKind();
+        input.setRowKind(RowKind.INSERT);
+
+        boolean matched = recursiveMultiJoin(
+                depth + 1, input, inputId, currentRows,
+                associations, JoinPhase.EMIT_RESULTS);
+
+        input.setRowKind(originalKind);
+        return matched;
     }
 
     private void addRecordToState(int inputId, RowData input) throws Exception {
@@ -187,245 +339,60 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         }
     }
 
-    /**
-     * Performs a multi-way join using a single MultiJoinCondition that evaluates all join
-     * conditions at once. This approach can be more efficient than the progressive binary join
-     * because: 1. This is a hash join: we're only joining records for each input with matching keys
-     * 2. It avoids creating intermediate joined rows 3. It can evaluate complex conditions across
-     * all inputs at once 4. It can short-circuit evaluation when any condition fails
-     */
-    private void performMultiJoin(RowData input, int inputId) throws Exception {
-        if (input == null) {
-            return;
+    private void updateCleanupTime(long timestamp) throws Exception {
+        Long currentCleanupTime = cleanupTimeState.value();
+        long newCleanupTime = timestamp + getMaxRetentionTime();
+        if (currentCleanupTime == null || newCleanupTime > currentCleanupTime) {
+            cleanupTimeState.update(newCleanupTime);
         }
-
-        int[] associations = createInitialAssociations();
-        RowData[] currentRows = new RowData[inputSpecs.size()];
-
-        recursiveMultiJoin(
-                0,
-                input,
-                inputId,
-                currentRows,
-                associations,
-                JoinPhase.CALCULATE_ASSOCIATIONS);
     }
 
-    /**
-     * Recursively processes join operations, building rows depth by depth and tracking associations.
-     */
-    private boolean recursiveMultiJoin(
-            int depth,
-            RowData input,
-            int inputId,
-            RowData[] currentRows,
-            int[] associations,
-            JoinPhase phase)
-            throws Exception {
-        if (depth == inputSpecs.size()) {
-            return processJoinAtMaxDepth(depth, input, currentRows, phase);
-        }
-
-        boolean isLeftJoin = isLeftJoinAtDepth(depth);
-        boolean depthMatched = processExistingRecords(
-                depth, input, inputId, currentRows,
-                associations, phase, isLeftJoin);
-
-        if (isLeftJoin && !depthMatched && associations[depth - 1] == 0) {
-            depthMatched = processWithNullPadding(
-                    depth, input, inputId, currentRows,
-                    associations, phase);
-        }
-
-        if (depth == inputId) {
-            depthMatched = processInputRecord(
-                    depth, input, inputId, currentRows,
-                    associations);
-        }
-
-        return depthMatched;
+    private void initializeCollector() {
+        this.collector = new TimestampedCollector<>(output);
     }
 
-    /**
-     * Process the join when we've reached the maximum depth.
-     */
-    private boolean processJoinAtMaxDepth(
-            int depth, RowData input, RowData[] currentRows, 
-            JoinPhase phase) {
-        
-        boolean isLeftJoin = isLeftJoinAtLastLevel(depth);
-
-        if (!isLeftJoin && !multiJoinCondition.apply(currentRows)) {
-            return false;
+    private void initializeNullRows() {
+        this.nullRows = new ArrayList<>(inputTypes.size());
+        for (InternalTypeInfo<RowData> inputType : inputTypes) {
+            this.nullRows.add(new GenericRowData(inputType.toRowType().getFieldCount()));
         }
-
-        if (phase == JoinPhase.CALCULATE_ASSOCIATIONS) {
-            return true;
-        }
-
-        emitRow(input.getRowKind(), currentRows);
-        return true;
     }
 
-    /**
-     * Process existing records at the current depth.
-     */
-    private boolean processExistingRecords(
-            int depth, RowData input, int inputId, RowData[] currentRows,
-            int[] associations, JoinPhase phase, boolean isLeftJoin) throws Exception {
-        
-        boolean depthMatched = false;
-        JoinRecordIterator recordIterator = stateHandlers.get(depth).getRecordsWithAssociations();
+    private void initializeStateHandlers() throws Exception {
+        this.stateHandlers = new ArrayList<>(inputSpecs.size());
+        for (int i = 0; i < inputSpecs.size(); i++) {
+            MultiJoinStateHandler handler =
+                    new MultiOuterJoinStateHandler(
+                            i,
+                            this,
+                            dummyKeySelectors.get(i),
+                            this.stateHandler,
+                            getOperatorConfig().getConfiguration(),
+                            getUserCodeClassloader(),
+                            inputSpecs.get(i),
+                            inputTypes.get(i),
+                            stateRetentionTime[i]);
+            stateHandlers.add(handler);
+            inputs.add(createInput(i + 1));
+        }
+    }
 
-        while (recordIterator.hasNext()) {
-            currentRows[depth] = recordIterator.next();
+    private void initializeCleanupState() throws Exception {
+        ValueStateDescriptor<Long> cleanupTimeDescriptor =
+                new ValueStateDescriptor<>("cleanup-time", Types.LONG);
+        this.cleanupTimeState = getRuntimeContext().getState(cleanupTimeDescriptor);
+    }
 
-            if (isLeftJoin) {
-                if (!matchesOuterCondition(depth, currentRows)) {
-                    continue;
-                }
-                
-                // During calculation phase, we always increment associations
-                // During emission phase, we increment for upserts and decrement for retractions
-                boolean shouldIncrement = phase == JoinPhase.CALCULATE_ASSOCIATIONS || isUpsert(input);
-                updateAssociationCount(depth, associations, shouldIncrement);
-            }
-
-            if (isLeftJoin) {
-                associations[depth] = 0;
-            }
-            
-            boolean matched = recursiveMultiJoin(
-                    depth + 1, input, inputId, currentRows,
-                    associations, phase);
-
-            if (matched) {
-                depthMatched = true;
+    private void closeConditions() throws Exception {
+        if (joinConditions != null) {
+            for (JoinCondition condition : joinConditions) {
+                condition.close();
             }
         }
-        
-        return depthMatched;
-    }
 
-    /**
-     * Process with null padding when no associations are found in a left join.
-     */
-    private boolean processWithNullPadding(
-            int depth, RowData input, int inputId, RowData[] currentRows,
-            int[] associations, JoinPhase phase) throws Exception {
-        
-        currentRows[depth] = nullRows.get(depth);
-        return recursiveMultiJoin(depth + 1, input, inputId, currentRows, associations, phase);
-    }
-
-    /**
-     * Process the actual input record at the appropriate depth.
-     */
-    private boolean processInputRecord(
-            int depth, RowData input, int inputId, RowData[] currentRows,
-            int[] associations) throws Exception {
-        
-        boolean depthMatched = false;
-        boolean isLeftJoin = isLeftJoinAtDepth(depth);
-        RowKind inputRowKind = input.getRowKind();
-        
-        if (isUpsert(input) && isLeftJoin && associations[depth - 1] == 0) {
-            depthMatched = handleRetractBeforeInput(
-                    depth, input, inputId, currentRows,
-                    associations);
+        if (multiJoinCondition != null) {
+            multiJoinCondition.close();
         }
-
-        currentRows[depth] = input;
-        
-        if (isLeftJoin) {
-            if (!matchesOuterCondition(depth, currentRows)) {
-                return false;
-            }
-            updateAssociationCount(depth, associations, isUpsert(input));
-        }
-
-        input.setRowKind(inputRowKind);
-        depthMatched = recursiveMultiJoin(
-                depth + 1, input, inputId, currentRows,
-                associations, JoinPhase.EMIT_RESULTS);
-
-        if (!isUpsert(input) && isLeftJoin && associations[depth - 1] == 0) {
-            depthMatched = handleInsertAfterInput(
-                    depth, input, inputId, currentRows,
-                    associations);
-        }
-
-        input.setRowKind(inputRowKind);
-        return depthMatched;
-    }
-
-    /**
-     * Handle retraction of previous null-padded results before processing input.
-     */
-    private boolean handleRetractBeforeInput(
-            int depth, RowData input, int inputId, RowData[] currentRows,
-            int[] associations) throws Exception {
-        
-        currentRows[depth] = nullRows.get(depth);
-        RowKind originalKind = input.getRowKind();
-        input.setRowKind(RowKind.DELETE);
-        
-        boolean depthMatched = recursiveMultiJoin(
-                depth + 1, input, inputId, currentRows,
-                associations, JoinPhase.EMIT_RESULTS);
-        
-        input.setRowKind(originalKind);
-        return depthMatched;
-    }
-
-    /**
-     * Handle insertion of new null-padded results after processing input.
-     */
-    private boolean handleInsertAfterInput(
-            int depth, RowData input, int inputId, RowData[] currentRows,
-            int[] associations) throws Exception {
-        
-        currentRows[depth] = nullRows.get(depth);
-        RowKind originalKind = input.getRowKind();
-        input.setRowKind(RowKind.INSERT);
-        
-        boolean depthMatched = recursiveMultiJoin(
-                depth + 1, input, inputId, currentRows,
-                associations, JoinPhase.EMIT_RESULTS);
-        
-        input.setRowKind(originalKind);
-        return depthMatched;
-    }
-
-    /**
-     * Check if the join condition is satisfied for the rows at the given depth.
-     * 
-     * @param depth the current processing depth
-     * @param currentRows the array of rows being processed
-     * @return true if the join condition is satisfied, false otherwise
-     */
-    private boolean matchesOuterCondition(int depth, RowData[] currentRows) {
-        return outerJoinConditions[depth].apply(currentRows);
-    }
-    
-    /**
-     * Update the association count for the given depth based on the operation type.
-     * 
-     * @param depth the current processing depth
-     * @param associations the array of association counts to update
-     * @param isUpsert true if this is an upsert operation, false for retractions
-     */
-    private void updateAssociationCount(int depth, int[] associations, boolean isUpsert) {
-        if (isUpsert) {
-            associations[depth - 1]++;
-        } else {
-            associations[depth - 1]--;
-        }
-    }
-
-    @Override
-    public List<Input> getInputs() {
-        return inputs;
     }
 
     private Input<RowData> createInput(int idx) {
@@ -437,12 +404,50 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         };
     }
 
-    private void updateCleanupTime(long timestamp) throws Exception {
-        Long currentCleanupTime = cleanupTimeState.value();
-        long newCleanupTime = timestamp + getMaxRetentionTime();
-        if (currentCleanupTime == null || newCleanupTime > currentCleanupTime) {
-            cleanupTimeState.update(newCleanupTime);
+    private void emitRow(RowKind rowKind, RowData[] rows) {
+        RowData joinedRow = rows[0];
+        for (int i = 1; i < rows.length; i++) {
+            joinedRow = new JoinedRowData(rowKind, joinedRow, rows[i]);
         }
+        collector.collect(joinedRow);
+    }
+
+    private boolean isUpsert(RowData row) {
+        return row.getRowKind() == RowKind.INSERT || row.getRowKind() == RowKind.UPDATE_AFTER;
+    }
+
+    private boolean isRetraction(RowData row) {
+        return row.getRowKind() == RowKind.DELETE || row.getRowKind() == RowKind.UPDATE_BEFORE;
+    }
+
+    private boolean isLeftJoinAtDepth(int depth) {
+        return depth > 0 && joinTypes.get(depth) == JoinRelType.LEFT;
+    }
+
+    private boolean isLeftJoinAtLastLevel(int depth) {
+        return depth > 0 && joinTypes.get(depth - 1) == JoinRelType.LEFT;
+    }
+
+    private boolean matchesOuterCondition(int depth, RowData[] currentRows) {
+        return outerJoinConditions[depth].apply(currentRows);
+    }
+
+    private void updateAssociationCount(int depth, int[] associations, boolean isUpsert) {
+        if (isUpsert) {
+            associations[depth - 1]++;
+        } else {
+            associations[depth - 1]--;
+        }
+    }
+
+    private boolean shouldIncrementAssociation(JoinPhase phase, RowData input) {
+        return phase == JoinPhase.CALCULATE_MATCHES || isUpsert(input);
+    }
+
+    private int[] createInitialAssociations() {
+        int[] associations = new int[inputSpecs.size()];
+        Arrays.fill(associations, 0);
+        return associations;
     }
 
     private long getMaxRetentionTime() {
@@ -454,59 +459,8 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
     }
 
     @Override
-    public void close() throws Exception {
-        if (joinConditions != null) {
-            for (JoinCondition condition : joinConditions) {
-                condition.close();
-            }
-        }
-
-        if (multiJoinCondition != null) {
-            multiJoinCondition.close();
-        }
-
-        super.close();
-    }
-
-    /** Emits a row with the specified row kind. */
-    private void emitRow(RowKind rowKind, RowData[] rows) {
-        // Build the joined row by progressively joining the inputs
-        RowData joinedRow = rows[0];
-        for (int i = 1; i < rows.length; i++) {
-            joinedRow = new JoinedRowData(rowKind, joinedRow, rows[i]);
-        }
-        collector.collect(joinedRow);
-    }
-
-    /**
-     * Check if a row is an upsert operation (INSERT or UPDATE_AFTER).
-     */
-    private boolean isUpsert(RowData row) {
-        return row.getRowKind() == RowKind.INSERT || row.getRowKind() == RowKind.UPDATE_AFTER;
-    }
-
-    /**
-     * Check if a row is a retraction operation (DELETE or UPDATE_BEFORE).
-     */
-    private boolean isRetraction(RowData row) {
-        return row.getRowKind() == RowKind.DELETE || row.getRowKind() == RowKind.UPDATE_BEFORE;
-    }
-
-    /**
-     * Check if the join at a specific depth is a left join.
-     */
-    private boolean isLeftJoinAtDepth(int depth) {
-        return depth > 0 && joinTypes.get(depth) == JoinRelType.LEFT;
-    }
-
-    private boolean isLeftJoinAtLastLevel(int depth) {
-        return depth > 0 && joinTypes.get(depth - 1) == JoinRelType.LEFT;
-    }
-
-    private int[] createInitialAssociations() {
-        int[] associations = new int[inputSpecs.size()];
-        Arrays.fill(associations, 0);
-        return associations;
+    public List<Input> getInputs() {
+        return inputs;
     }
 }
 
