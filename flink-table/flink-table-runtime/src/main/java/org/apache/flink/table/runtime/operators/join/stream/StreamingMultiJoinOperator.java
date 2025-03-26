@@ -127,36 +127,17 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
 
         // Initialize inputs
         for (int i = 0; i < inputSpecs.size(); i++) {
-            MultiJoinStateHandler handler;
-            // TODO GUSTAVO join type we need to have the join types here
-
-            // if (outerJoinConditions[i] == null) {
-            //  todo gustavo we still right nad outer here
-            if (i + 1 < inputSpecs.size() && joinTypes.get(i + 1) == JoinRelType.LEFT) {
-                handler =
-                        new MultiOuterJoinStateHandler(
-                                i,
-                                this,
-                                dummyKeySelectors.get(i),
-                                this.stateHandler,
-                                getOperatorConfig().getConfiguration(),
-                                getUserCodeClassloader(),
-                                inputSpecs.get(i),
-                                inputTypes.get(i),
-                                stateRetentionTime[i]);
-            } else {
-                // create outer handler
-                handler =
-                        new MultiJoinHasUniqueKeyStateHandler(
-                                i,
-                                this,
-                                dummyKeySelectors.get(i),
-                                this.stateHandler,
-                                getOperatorConfig().getConfiguration(),
-                                getUserCodeClassloader(),
-                                inputSpecs.get(i),
-                                stateRetentionTime[i]);
-            }
+            MultiJoinStateHandler handler =
+                    new MultiOuterJoinStateHandler(
+                            i,
+                            this,
+                            dummyKeySelectors.get(i),
+                            this.stateHandler,
+                            getOperatorConfig().getConfiguration(),
+                            getUserCodeClassloader(),
+                            inputSpecs.get(i),
+                            inputTypes.get(i),
+                            stateRetentionTime[i]);
             stateHandlers.add(handler);
             inputs.add(createInput(i + 1));
         }
