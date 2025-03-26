@@ -14,7 +14,6 @@ import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.table.data.GenericRowData;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.utils.JoinedRowData;
-import org.apache.flink.table.runtime.generated.JoinCondition;
 import org.apache.flink.table.runtime.generated.MultiJoinCondition;
 import org.apache.flink.table.runtime.operators.join.stream.state.MultiJoinStateHandlers.*;
 import org.apache.flink.table.runtime.operators.join.stream.utils.JoinInputSideSpec;
@@ -46,7 +45,6 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
 
     private final List<JoinInputSideSpec> inputSpecs;
     private final List<JoinRelType> joinTypes;
-    private final List<JoinCondition> joinConditions;
     private final List<InternalTypeInfo<RowData>> inputTypes;
     private final MultiJoinCondition multiJoinCondition;
     private final boolean[] filterNulls;
@@ -95,7 +93,6 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             List<JoinInputSideSpec> inputSpecs,
             List<KeySelector<RowData, String>> dummyKeySelectors,
             List<JoinRelType> joinTypes,
-            List<JoinCondition> joinConditions,
             MultiJoinCondition multiJoinCondition,
             boolean[] filterNulls,
             long[] stateRetentionTime,
@@ -106,7 +103,6 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         this.inputSpecs = inputSpecs;
         this.dummyKeySelectors = dummyKeySelectors;
         this.joinTypes = joinTypes;
-        this.joinConditions = joinConditions;
         this.multiJoinCondition = multiJoinCondition;
         this.filterNulls = filterNulls;
         this.stateRetentionTime = stateRetentionTime;
@@ -176,7 +172,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         }
 
         boolean isLeftJoin = isLeftJoinAtDepth(depth);
-        boolean matched = processExistingRecords(
+        boolean matched = processRecords(
                 depth, input, inputId, currentRows,
                 associations, phase, isLeftJoin);
 
@@ -213,7 +209,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         return true;
     }
 
-    private boolean processExistingRecords(
+    private boolean processRecords(
             int depth, RowData input, int inputId, RowData[] currentRows,
             int[] associations, JoinPhase phase, boolean isLeftJoin) throws Exception {
         
@@ -380,12 +376,6 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
     }
 
     private void closeConditions() throws Exception {
-        if (joinConditions != null) {
-            for (JoinCondition condition : joinConditions) {
-                condition.close();
-            }
-        }
-
         if (multiJoinCondition != null) {
             multiJoinCondition.close();
         }
