@@ -176,19 +176,15 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
 
     private void processElement(int inputId, RowData input, long timestamp) throws Exception {
         inputId = inputId - 1; // Convert to 0-based index
-        System.out.println(String.format("Processing element: inputId=%d, rowKind=%s, timestamp=%d", 
-            inputId, input.getRowKind(), timestamp));
 
         // Use multi-way join condition if available, otherwise use binary joins
         if (multiJoinCondition != null) {
-            System.out.println("Using multi-way join condition");
             // First perform the join without adding the record to state
             performMultiJoin(input, inputId);
 
             // Then add the record to state for future joins
             addRecordToState(inputId, input);
         } else {
-            System.out.println("Using binary join approach");
             // For binary join approach, add to state first then perform join
             addRecordToState(inputId, input);
             performMultiBinaryJoin(input, inputId);
@@ -198,19 +194,14 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
     }
 
     private void addRecordToState(int inputId, RowData input) throws Exception {
-        System.out.println(String.format("Adding record to state: inputId=%d, rowKind=%s", 
-            inputId, input.getRowKind()));
-        if (input.getRowKind() == RowKind.DELETE || input.getRowKind() == RowKind.UPDATE_BEFORE) {
-            System.out.println("Retracting record from state");
+        if (isRetraction(input)) {
             stateHandlers.get(inputId).retractRecord(input);
         } else {
             if (stateHandlers.get(inputId) instanceof MultiOuterJoinStateHandler) {
-                System.out.println("Adding record to outer join state handler");
                 var outStateHandler = ((MultiOuterJoinStateHandler) stateHandlers.get(inputId));
                 var associations = outStateHandler.getRecordAssociations(input);
                 outStateHandler.addRecord(input, associations);
             } else {
-                System.out.println("Adding record to regular state handler");
                 stateHandlers.get(inputId).addRecord(input);
             }
         }
@@ -275,12 +266,8 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
      */
     private void performMultiJoin(RowData input, int inputId) throws Exception {
         if (input == null) {
-            System.out.println("Skipping null input in performMultiJoin");
             return;
         }
-
-        System.out.println(String.format("Starting multi-join: inputId=%d, rowKind=%s", 
-            inputId, input.getRowKind()));
 
         // Get iterables for all inputs without modifying state
         List<JoinRecordIterator> allInputRecords = getAllInputRecords();
@@ -288,7 +275,6 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         // Array to track number of matches for each input to the right
         int[] matches = new int[inputSpecs.size()];
         Arrays.fill(matches, 0);
-        System.out.println("Initial matches array: " + Arrays.toString(matches));
 
         // Create a row array to build our join result
         RowData[] currentRows = new RowData[inputSpecs.size()];
@@ -317,8 +303,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
     }
 
     /**
-     * Processes the actual input record within the recursive join. This is called after all
-     * existing state records have been evaluated.
+     * Recursively processes join operations, building rows depth by depth and tracking matches.
      */
     private boolean recursiveMultiJoin(
             int depth,
@@ -331,305 +316,269 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             boolean isUpsert,
             boolean shouldEmit)
             throws Exception {
-        System.out.println(String.format("recursiveMultiJoin: depth=%d, inputId=%d, isUpsert=%b, shouldEmit=%b", 
-            depth, inputId, isUpsert, shouldEmit));
-        System.out.println("Current rows state:");
-        for (int i = 0; i < currentRows.length; i++) {
-            System.out.println(String.format("  Row[%d]: %s", i, currentRows[i] != null ? 
-                String.format("kind=%s, fields=%s", currentRows[i].getRowKind(), currentRows[i]) : "null"));
-        }
-        System.out.println("Current matches array: " + Arrays.toString(matches));
-        System.out.println("Current emittedMatches array: " + Arrays.toString(emittedMatches));
-
-        var isRetract = !isUpsert;
-        var rightSide = depth == inputSpecs.size() ? depth - 1 : depth;
-        var leftSide = rightSide - 1;
-        var leftJoin = rightSide > 0 && joinTypes.get(rightSide) == JoinRelType.LEFT;
-
-        var checkCondition = depth == inputSpecs.size();
-        if (checkCondition) {
-            System.out.println("Checking final join condition at depth=" + depth);
-
-            // For inner joins, we don't check the condition on every level
-            if (!leftJoin && !multiJoinCondition.apply(currentRows)) {
-                System.out.println("Inner join condition not satisfied");
-                return false;
-            }
-
-            // We're just recalculating num of matches
-            if (!shouldEmit) {
-                System.out.println("Skipping emission, just recalculating matches");
-                return true;
-            }
-
-            // Retract previous padded row
-            /*if (isUpsert && leftJoin) {
-                System.out.println("Retracting previous padded row for left join");
-                emitRetractPaddedRow(
-                        input.getRowKind(), RowKind.DELETE, currentRows, emittedMatches, inputId);
-            }*/
-
-            // Emit the matching row for both upserts and retractions
-            System.out.println("Emitting matching row");
-            emitRow(input.getRowKind(), currentRows);
-
-            // Emit a padded row
-            /*if (isRetract && leftJoin) {
-                System.out.println("Emitting padded row for left join retraction");
-                emitInsertPaddedRow(
-                        input.getRowKind(), RowKind.INSERT, currentRows, emittedMatches, inputId);
-            }*/
-
-            return true;
+        // If we've reached the maximum depth, we can emit the row if conditions are met
+        if (depth == inputSpecs.size()) {
+            return processJoinAtMaxDepth(depth, input, currentRows, isUpsert, shouldEmit);
         }
 
-        boolean depthMatched = false;
-        boolean isLeftJoin = depth > 0 && joinTypes.get(depth) == JoinRelType.LEFT;
+        boolean isLeftJoin = isLeftJoinAtDepth(depth);
+        boolean depthMatched = processExistingRecords(
+                depth, input, inputId, currentRows, allInputRecords, 
+                matches, emittedMatches, isUpsert, shouldEmit, isLeftJoin);
 
-        System.out.println(String.format("Processing depth=%d, isLeftJoin=%b", depth, isLeftJoin));
-
-        // For other depths, process all records from state
-        JoinRecordIterator recordIterator = stateHandlers.get(depth).getRecordsWithAssociations();
-
-        // Process each record at this depth
-        while (recordIterator.hasNext()) {
-            // Get the next record at this depth
-            currentRows[depth] = recordIterator.next();
-            System.out.println(String.format("Processing record at depth %d: %s", 
-                depth, currentRows[depth] != null ? 
-                String.format("kind=%s, fields=%s", currentRows[depth].getRowKind(), currentRows[depth]) : "null"));
-
-            // For outer joins, check the condition
-            if (isLeftJoin) {
-                // If condition doesn't match, skip this record
-                boolean conditionMatches = outerJoinConditions[depth].apply(currentRows);
-                if (!conditionMatches) {
-                    System.out.println("Left join condition not satisfied at depth=" + depth);
-                    continue;
-                }
-
-                // If condition matches or we're just recalculating num of matches, we only
-                // increase the number of matches
-                if (isUpsert) {
-                    matches[depth - 1]++;
-                    System.out.println(String.format("Incremented matches for depth=%d, new count=%d, matches array: %s",
-                        depth-1, matches[depth-1], Arrays.toString(matches)));
-                } else {
-                    matches[depth - 1]--;
-                    System.out.println(String.format("Decremented matches for depth=%d, new count=%d, matches array: %s",
-                        depth-1, matches[depth-1], Arrays.toString(matches)));
-                }
-            }
-
-            // Recursively continue the join
-            // Reset the match count for this depth
-            if (leftJoin) {
-                matches[depth] = 0;
-                System.out.println(String.format("Reset matches for depth=%d, matches array: %s", 
-                    depth, Arrays.toString(matches)));
-            }
-            depthMatched =
-                    recursiveMultiJoin(
-                            depth + 1,
-                            input,
-                            inputId,
-                            currentRows,
-                            allInputRecords,
-                            matches,
-                            emittedMatches,
-                            isUpsert,
-                            shouldEmit);
-
-            if (depthMatched) {
-                emittedMatches = matches.clone();
-                System.out.println("Depth matched at depth=" + depth + ", updated emittedMatches: " + Arrays.toString(emittedMatches));
-            }
-        }
-
-        // If we have no matches, we try with null padding now
+        // If we have no matches with existing records, try with null padding for left joins
         if (isLeftJoin && !depthMatched && matches[depth - 1] == 0) {
-            System.out.println("No matches found at depth=" + depth + ", trying null padding");
-            System.out.println("Current matches array: " + Arrays.toString(matches));
-            // There were no matches, we now try with null padding
-            currentRows[depth] = nullRows.get(depth);
-            System.out.println(String.format("Null padded row at depth %d: %s", 
-                depth, currentRows[depth] != null ? 
-                String.format("kind=%s, fields=%s", currentRows[depth].getRowKind(), currentRows[depth]) : "null"));
-
-            // We have to call the recursive join again with the null-padded row to have a correct
-            // numOfMatches array
-            depthMatched =
-                    recursiveMultiJoin(
-                            depth + 1,
-                            input,
-                            inputId,
-                            currentRows,
-                            allInputRecords,
-                            matches,
-                            emittedMatches,
-                            isUpsert,
-                            shouldEmit);
-
-            if (depthMatched) {
-                emittedMatches = matches.clone();
-                System.out.println("Null padding matched at depth=" + depth + ", updated emittedMatches: " + Arrays.toString(emittedMatches));
-            }
+            depthMatched = processWithNullPadding(
+                    depth, input, inputId, currentRows, allInputRecords,
+                    matches, emittedMatches, isUpsert, shouldEmit);
         }
 
-        // Now we'll perform the join with the actual input record which is what we're looking for
-        // ACTUAL JOIN
+        // Process the actual input record if we're at the right depth
         if (depth == inputId) {
-            System.out.println("depth == inputId");
-            // do we need not to update num of matches now?
-            boolean inputIsUpsert =
-                    input.getRowKind() == RowKind.INSERT
-                            || input.getRowKind() == RowKind.UPDATE_AFTER;
-            var inputRowKind = input.getRowKind();
-
-            /* RETRACT BEFORE INPUT */
-            if (inputIsUpsert && isLeftJoin && matches[depth - 1] == 0) {
-                System.out.println("/* RETRACT BEFORE INPUT */ No matches found at depth=" + depth + ", trying null padding");
-                System.out.println("Current matches array: " + Arrays.toString(matches));
-                // There were no matches, we now try with null padding
-                currentRows[depth] = nullRows.get(depth);
-                System.out.println(String.format("Null padded row at depth %d: %s",
-                        depth, currentRows[depth] != null ?
-                                String.format("kind=%s, fields=%s", currentRows[depth].getRowKind(), currentRows[depth]) : "null"));
-
-                // We have to call the recursive join again with the null-padded row to have a correct
-                // numOfMatches array
-                input.setRowKind(RowKind.DELETE);
-                depthMatched =
-                        recursiveMultiJoin(
-                                depth + 1,
-                                input,
-                                inputId,
-                                currentRows,
-                                allInputRecords,
-                                matches,
-                                emittedMatches,
-                                false, // we want to retract
-                                true);
-
-                if (depthMatched) {
-                    emittedMatches = matches.clone();
-                    System.out.println("Null padding matched at depth=" + depth + ", updated emittedMatches: " + Arrays.toString(emittedMatches));
-                }
-            }
-
-            /* EMITTING WITH THE ACTUAL INPUT */
-            System.out.println("Processing input record at depth=" + depth);
-            currentRows[depth] = input;
-            System.out.println(String.format("Input record at depth %d: %s", 
-                depth, currentRows[depth] != null ? 
-                String.format("kind=%s, fields=%s", currentRows[depth].getRowKind(), currentRows[depth]) : "null"));
-
-            // If condition doesn't match, skip this record
-            if (isLeftJoin) {
-                // If condition doesn't match, skip this record
-                boolean conditionMatches = outerJoinConditions[depth].apply(currentRows);
-                if (!conditionMatches) {
-                    System.out.println("Left join condition not satisfied at depth=" + depth);
-                    return false;
-                }
-
-                // If condition matches or we're just recalculating num of matches, we only
-                // increase the number of matches
-                if (inputIsUpsert) {
-                    matches[depth - 1]++;
-                    System.out.println(String.format("Incremented matches for depth=%d, new count=%d, matches array: %s",
-                            depth-1, matches[depth-1], Arrays.toString(matches)));
-                } else {
-                    matches[depth - 1]--;
-                    System.out.println(String.format("Decremented matches for depth=%d, new count=%d, matches array: %s",
-                            depth-1, matches[depth-1], Arrays.toString(matches)));
-                }
-            }
-
-            input.setRowKind(inputRowKind);
-            depthMatched =
-                    recursiveMultiJoin(
-                            depth + 1,
-                            input,
-                            inputId,
-                            currentRows,
-                            allInputRecords,
-                            matches,
-                            emittedMatches,
-                            inputIsUpsert,
-                            true);
-
-            if (depthMatched) {
-                emittedMatches = matches.clone();
-                System.out.println("Input record matched at depth=" + depth + ", updated emittedMatches: " + Arrays.toString(emittedMatches));
-            }
-
-            /* INSERT PAD AFTER INPUT */
-            if (!inputIsUpsert && isLeftJoin && matches[depth - 1] == 0) {
-                System.out.println("/* RETRACT BEFORE INPUT */ No matches found at depth=" + depth + ", trying null padding");
-                System.out.println("Current matches array: " + Arrays.toString(matches));
-                // There were no matches, we now try with null padding
-                currentRows[depth] = nullRows.get(depth);
-                System.out.println(String.format("Null padded row at depth %d: %s",
-                        depth, currentRows[depth] != null ?
-                                String.format("kind=%s, fields=%s", currentRows[depth].getRowKind(), currentRows[depth]) : "null"));
-
-                // We have to call the recursive join again with the null-padded row to have a correct
-                // numOfMatches array
-                input.setRowKind(RowKind.INSERT);
-                depthMatched =
-                        recursiveMultiJoin(
-                                depth + 1,
-                                input,
-                                inputId,
-                                currentRows,
-                                allInputRecords,
-                                matches,
-                                emittedMatches,
-                                true, // we want to insert a padded row
-                                true);
-
-                if (depthMatched) {
-                    emittedMatches = matches.clone();
-                    System.out.println("Null padding matched at depth=" + depth + ", updated emittedMatches: " + Arrays.toString(emittedMatches));
-                }
-            }
-
-            // We have to set the row kind back to the original value so we add it to state
-            // properly after the join is finished
-            input.setRowKind(inputRowKind);
+            depthMatched = processInputRecord(
+                    depth, input, inputId, currentRows, allInputRecords,
+                    matches, emittedMatches, isUpsert);
         }
 
         return depthMatched;
     }
 
     /**
-     * Emits the row with padding for inputs that had no matches. This version uses numOfMatches to
-     * determine which inputs need padding.
+     * Process the join when we've reached the maximum depth.
      */
-    private void emitRowWithNullPaddedRows(RowKind rowKind, RowData[] rows, int[] numOfMatches) {
-        // Clone the rows to avoid modifying the original
-        RowData[] paddedRows = rows.clone();
+    private boolean processJoinAtMaxDepth(
+            int depth, RowData input, RowData[] currentRows, 
+            boolean isUpsert, boolean shouldEmit) {
+        
+        // Check if this is a left join at the last level
+        boolean isLeftJoin = depth > 0 && joinTypes.get(depth - 1) == JoinRelType.LEFT;
 
-        // Pad with nulls for any input that had no matches (except the first)
-        for (int i = 1; i < paddedRows.length; i++) {
-            if (numOfMatches[i - 1] == 0 && joinTypes.get(i) != JoinRelType.INNER) {
-                paddedRows[i] = nullRows.get(i);
-            }
+        // For inner joins, check the condition
+        if (!isLeftJoin && !multiJoinCondition.apply(currentRows)) {
+            return false;
         }
 
-        // Build the joined row by progressively joining the inputs
-        RowData joinedRow = paddedRows[0];
-        for (int i = 1; i < paddedRows.length; i++) {
-            joinedRow = new JoinedRowData(rowKind, joinedRow, paddedRows[i]);
+        // If we're just calculating matches and not emitting, return success
+        if (!shouldEmit) {
+            return true;
         }
-        collector.collect(joinedRow);
+
+        // Emit the matching row 
+        emitRow(input.getRowKind(), currentRows);
+        return true;
     }
 
     /**
-     * Recursively builds a cartesian product of all already filtered by key inputs and checks the
-     * join condition for all of them in one go. This is a depth-first approach to building all
-     * possible combinations of rows.
+     * Process existing records at the current depth.
+     */
+    private boolean processExistingRecords(
+            int depth, RowData input, int inputId, RowData[] currentRows,
+            List<JoinRecordIterator> allInputRecords, int[] matches, int[] emittedMatches,
+            boolean isUpsert, boolean shouldEmit, boolean isLeftJoin) throws Exception {
+        
+        boolean depthMatched = false;
+        JoinRecordIterator recordIterator = stateHandlers.get(depth).getRecordsWithAssociations();
+
+        // Process each record at this depth
+        while (recordIterator.hasNext()) {
+            // Get the next record at this depth
+            currentRows[depth] = recordIterator.next();
+
+            // For outer joins, check the condition
+            if (isLeftJoin) {
+                if (!checkJoinCondition(depth, currentRows)) {
+                    continue;
+                }
+                
+                // Update match counts if condition is satisfied
+                updateMatchCount(depth, matches, isUpsert);
+            }
+
+            // Reset match count and continue recursively
+            if (isLeftJoin) {
+                matches[depth] = 0;
+            }
+            
+            boolean matched = recursiveMultiJoin(
+                    depth + 1, input, inputId, currentRows, allInputRecords,
+                    matches, emittedMatches, isUpsert, shouldEmit);
+
+            if (matched) {
+                emittedMatches = matches.clone();
+                depthMatched = true;
+            }
+        }
+        
+        return depthMatched;
+    }
+
+    /**
+     * Process with null padding when no matches are found in a left join.
+     */
+    private boolean processWithNullPadding(
+            int depth, RowData input, int inputId, RowData[] currentRows,
+            List<JoinRecordIterator> allInputRecords, int[] matches, int[] emittedMatches,
+            boolean isUpsert, boolean shouldEmit) throws Exception {
+        
+        // There were no matches, we try with null padding
+        currentRows[depth] = nullRows.get(depth);
+
+        // Call recursive join again with null-padded row to get correct matches
+        boolean depthMatched = recursiveMultiJoin(
+                depth + 1, input, inputId, currentRows, allInputRecords,
+                matches, emittedMatches, isUpsert, shouldEmit);
+
+        if (depthMatched) {
+            emittedMatches = matches.clone();
+        }
+        
+        return depthMatched;
+    }
+
+    /**
+     * Process the actual input record at the appropriate depth.
+     */
+    private boolean processInputRecord(
+            int depth, RowData input, int inputId, RowData[] currentRows,
+            List<JoinRecordIterator> allInputRecords, int[] matches, int[] emittedMatches,
+            boolean isUpsert) throws Exception {
+        
+        boolean depthMatched = false;
+        boolean isLeftJoin = isLeftJoinAtDepth(depth);
+        boolean inputIsUpsert = isUpsert(input);
+        RowKind inputRowKind = input.getRowKind();
+        
+        // Handle retraction of previous null-padded results if needed
+        if (inputIsUpsert && isLeftJoin && matches[depth - 1] == 0) {
+            depthMatched = handleRetractBeforeInput(
+                    depth, input, inputId, currentRows, allInputRecords,
+                    matches, emittedMatches);
+        }
+
+        // Process with the actual input
+        currentRows[depth] = input;
+        
+        // Check left join condition if needed
+        if (isLeftJoin) {
+            if (!checkJoinCondition(depth, currentRows)) {
+                return false;
+            }
+            
+            // Update match counts if condition is satisfied
+            updateMatchCount(depth, matches, inputIsUpsert);
+        }
+
+        // Continue recursive join with the actual input
+        input.setRowKind(inputRowKind);
+        depthMatched = recursiveMultiJoin(
+                depth + 1, input, inputId, currentRows, allInputRecords,
+                matches, emittedMatches, inputIsUpsert, true);
+
+        if (depthMatched) {
+            emittedMatches = matches.clone();
+        }
+
+        // Handle insertion of new null-padded results if needed
+        if (!inputIsUpsert && isLeftJoin && matches[depth - 1] == 0) {
+            depthMatched = handleInsertAfterInput(
+                    depth, input, inputId, currentRows, allInputRecords,
+                    matches, emittedMatches);
+        }
+
+        // Restore original row kind
+        input.setRowKind(inputRowKind);
+        
+        return depthMatched;
+    }
+
+    /**
+     * Handle retraction of previous null-padded results before processing input.
+     */
+    private boolean handleRetractBeforeInput(
+            int depth, RowData input, int inputId, RowData[] currentRows,
+            List<JoinRecordIterator> allInputRecords, int[] matches, int[] emittedMatches) 
+            throws Exception {
+        
+        // Set null padding for retraction
+        currentRows[depth] = nullRows.get(depth);
+        
+        // Temporarily change row kind for retraction
+        RowKind originalKind = input.getRowKind();
+        input.setRowKind(RowKind.DELETE);
+        
+        // Process the retraction
+        boolean depthMatched = recursiveMultiJoin(
+                depth + 1, input, inputId, currentRows, allInputRecords,
+                matches, emittedMatches, false, true);
+
+        if (depthMatched) {
+            emittedMatches = matches.clone();
+        }
+        
+        // Restore original row kind
+        input.setRowKind(originalKind);
+        
+        return depthMatched;
+    }
+
+    /**
+     * Handle insertion of new null-padded results after processing input.
+     */
+    private boolean handleInsertAfterInput(
+            int depth, RowData input, int inputId, RowData[] currentRows,
+            List<JoinRecordIterator> allInputRecords, int[] matches, int[] emittedMatches) 
+            throws Exception {
+        
+        // Set null padding for insertion
+        currentRows[depth] = nullRows.get(depth);
+        
+        // Temporarily change row kind for insertion
+        RowKind originalKind = input.getRowKind();
+        input.setRowKind(RowKind.INSERT);
+        
+        // Process the insertion
+        boolean depthMatched = recursiveMultiJoin(
+                depth + 1, input, inputId, currentRows, allInputRecords,
+                matches, emittedMatches, true, true);
+
+        if (depthMatched) {
+            emittedMatches = matches.clone();
+        }
+        
+        // Restore original row kind
+        input.setRowKind(originalKind);
+        
+        return depthMatched;
+    }
+
+    /**
+     * Check if the join condition is satisfied for the rows at the given depth.
+     * 
+     * @param depth the current processing depth
+     * @param currentRows the array of rows being processed
+     * @return true if the join condition is satisfied, false otherwise
+     */
+    private boolean checkJoinCondition(int depth, RowData[] currentRows) {
+        return outerJoinConditions[depth].apply(currentRows);
+    }
+    
+    /**
+     * Update the match count for the given depth based on the operation type.
+     * 
+     * @param depth the current processing depth
+     * @param matches the array of match counts to update
+     * @param isUpsert true if this is an upsert operation, false for retractions
+     */
+    private void updateMatchCount(int depth, int[] matches, boolean isUpsert) {
+        if (isUpsert) {
+            matches[depth - 1]++;
+        } else {
+            matches[depth - 1]--;
+        }
+    }
+
+    /**
+     * Collect records from an iterator into a target list.
      */
     private void collectRecords(Iterator<RowData> records, List<RowData> target) throws Exception {
         while (records.hasNext()) {
@@ -684,12 +633,6 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
 
     /** Emits a row with the specified row kind. */
     private void emitRow(RowKind rowKind, RowData[] rows) {
-        System.out.println("Emitting row: rowKind=" + rowKind);
-        System.out.println("Row contents:");
-        for (int i = 0; i < rows.length; i++) {
-            System.out.println(String.format("  Row[%d]: %s", i, rows[i] != null ? 
-                String.format("kind=%s, fields=%s", rows[i].getRowKind(), rows[i]) : "null"));
-        }
         // Build the joined row by progressively joining the inputs
         RowData joinedRow = rows[0];
         for (int i = 1; i < rows.length; i++) {
@@ -699,171 +642,23 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
     }
 
     /**
-     * Creates and emits a row with null padding for positions where no matches were found. For each
-     * position with matches[pos] = 0, the position pos + 1 will be padded with null.
-     *
-     * @param newRowKind The RowKind to use for the emitted row (INSERT or DELETE)
-     * @param currentRows The current row array to be padded
-     * @param emittedMatches Array tracking matches for each position
-     * @throws Exception if any error occurs during emission
+     * Check if a row is an upsert operation (INSERT or UPDATE_AFTER).
      */
-    private void emitRetractPaddedRow(
-            RowKind origRowKind,
-            RowKind newRowKind,
-            RowData[] currentRows,
-            int[] emittedMatches,
-            int inputId)
-            throws Exception {
-        System.out.println(String.format("Emitting retract padded row: origRowKind=%s, newRowKind=%s, inputId=%d", 
-            origRowKind, newRowKind, inputId));
-        System.out.println("Current rows state:");
-        for (int i = 0; i < currentRows.length; i++) {
-            System.out.println(String.format("  Row[%d]: %s", i, currentRows[i] != null ? 
-                String.format("kind=%s, fields=%s", currentRows[i].getRowKind(), currentRows[i]) : "null"));
-        }
-
-        if (currentRows == null || emittedMatches == null) {
-            System.out.println("Skipping retract padded row - null inputs");
-            return;
-        }
-
-        // Create a copy of currentRows to avoid modifying the original
-        RowData[] paddedRows = currentRows.clone();
-
-        // Track if any padding was applied (to check if rows differ)
-        boolean rowsModified = false;
-        // The outmost left join should determine if an emit is necessary, we only emit if
-        boolean shouldEmit = false;
-
-        for (int i = inputId; i < emittedMatches.length; i++) {
-            if (i == 0) {
-                break;
-            }
-            var matches = outerJoinConditions[i].apply(paddedRows);
-
-            var leftAssociations = emittedMatches[i - 1];
-            if (leftAssociations == 0) {
-                // Pad position pos + 1 with null
-                paddedRows[i] = nullRows.get(i);
-                System.out.println("Padding position " + i + " with null");
-                shouldEmit = true;
-                // Check if this actually modified the row (only mark as modified if we changed
-                // something)
-                if (!paddedRows[i].equals(currentRows[i])) {
-                    rowsModified = true;
-                }
-                // If we already have associations at this depth and the current row we're padding
-                // doesn't actually match, there's no need to emit a retraction
-            } else if (leftAssociations > 0 && !matches) {
-                shouldEmit = false;
-            }
-        }
-
-        // Check if the padded row is different from the original and has at least one non-null
-        // value
-        boolean hasNonNullRow = false;
-        for (RowData row : paddedRows) {
-            if (row != null) {
-                hasNonNullRow = true;
-                break;
-            }
-        }
-
-        // Only emit if rows were modified and we have at least one non-null row
-        if (shouldEmit && rowsModified && hasNonNullRow) {
-            System.out.println("Emitting retract padded row - rows modified and has non-null values");
-            emitRow(newRowKind, paddedRows);
-        } else {
-            System.out.println("Skipping retract padded row - no modifications or all nulls");
-        }
+    private boolean isUpsert(RowData row) {
+        return row.getRowKind() == RowKind.INSERT || row.getRowKind() == RowKind.UPDATE_AFTER;
     }
 
-    private void emitInsertPaddedRow(
-            RowKind origRowKind,
-            RowKind newRowKind,
-            RowData[] currentRows,
-            int[] emittedMatches,
-            int inputId)
-            throws Exception {
-        System.out.println(String.format("Emitting insert padded row: origRowKind=%s, newRowKind=%s, inputId=%d",
-            origRowKind, newRowKind, inputId));
-        System.out.println("Current rows state:");
-        for (int i = 0; i < currentRows.length; i++) {
-            System.out.println(String.format("  Row[%d]: %s", i, currentRows[i] != null ? 
-                String.format("kind=%s, fields=%s", currentRows[i].getRowKind(), currentRows[i]) : "null"));
-        }
+    /**
+     * Check if a row is a retraction operation (DELETE or UPDATE_BEFORE).
+     */
+    private boolean isRetraction(RowData row) {
+        return row.getRowKind() == RowKind.DELETE || row.getRowKind() == RowKind.UPDATE_BEFORE;
+    }
 
-        if (currentRows == null || emittedMatches == null) {
-            System.out.println("Skipping insert padded row - null inputs");
-            return;
-        }
-
-        // Create a copy of currentRows to avoid modifying the original
-        RowData[] paddedRows = currentRows.clone();
-
-        // Track if any padding was applied
-        boolean rowsModified = false;
-        // Flag to determine if we should emit based on left join column rule
-        boolean shouldEmit = false;
-
-        if (inputId == 0) {
-            System.out.println("Skipping insert padded row - inputId is 0");
-            return;
-        }
-
-        var leftAssociations = emittedMatches[inputId - 1];
-        if (leftAssociations > 1) {
-            System.out.println("Skipping insert padded row - too many matches at depth " + (inputId-1));
-            return;
-        } else if (leftAssociations == 1) {
-            paddedRows[inputId] = nullRows.get(inputId);
-            rowsModified = true;
-            shouldEmit = true;
-            System.out.println("Padding position " + inputId + " with null - single match");
-        } else {
-            System.out.println("Invalid state: deleting record which doesn't exist");
-            throw new RuntimeException(
-                    "Should not happen: we are deleting a record which doesn't exist");
-        }
-
-        for (int i = inputId + 1; i < paddedRows.length; i++) {
-            var matches = outerJoinConditions[i].apply(paddedRows);
-
-            leftAssociations = emittedMatches[i - 1];
-            if (leftAssociations == 1 && !matches) {
-                paddedRows[i] = nullRows.get(i);
-                shouldEmit = true;
-                System.out.println("Padding position " + i + " with null - no match");
-            } else if (leftAssociations > 1) {
-                shouldEmit = false;
-                System.out.println("Skipping padding at position " + i + " - too many matches");
-            }
-
-            // Check if this actually modified the row
-            if (currentRows[i] != null && !paddedRows[i].equals(currentRows[i])) {
-                rowsModified = true;
-            }
-        }
-
-        // Check if the padded row has at least one non-null value
-        boolean hasNonNullRow = false;
-        for (RowData row : paddedRows) {
-            if (row != null) {
-                hasNonNullRow = true;
-                break;
-            }
-        }
-
-        // Only emit if:
-        // 1. Rows were modified
-        // 2. We have at least one non-null row
-        // 3. The shouldEmit flag is true (we didn't pad a non-left-join column)
-        if (rowsModified && hasNonNullRow && shouldEmit) {
-            System.out.println("Emitting insert padded row - all conditions met");
-            emitRow(newRowKind, paddedRows);
-        } else {
-            System.out.println(String.format("Skipping insert padded row - conditions not met: modified=%b, hasNonNull=%b, shouldEmit=%b", 
-                rowsModified, hasNonNullRow, shouldEmit));
-        }
+    /**
+     * Check if the join at a specific depth is a left join.
+     */
+    private boolean isLeftJoinAtDepth(int depth) {
+        return depth > 0 && joinTypes.get(depth) == JoinRelType.LEFT;
     }
 }
