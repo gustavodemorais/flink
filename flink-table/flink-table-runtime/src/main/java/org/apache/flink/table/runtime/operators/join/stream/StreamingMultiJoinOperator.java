@@ -363,22 +363,22 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             }
 
             // Retract previous padded row
-            if (isUpsert && leftJoin) {
+            /*if (isUpsert && leftJoin) {
                 System.out.println("Retracting previous padded row for left join");
                 emitRetractPaddedRow(
                         input.getRowKind(), RowKind.DELETE, currentRows, emittedMatches, inputId);
-            }
+            }*/
 
             // Emit the matching row for both upserts and retractions
             System.out.println("Emitting matching row");
             emitRow(input.getRowKind(), currentRows);
 
             // Emit a padded row
-            if (isRetract && leftJoin) {
+            /*if (isRetract && leftJoin) {
                 System.out.println("Emitting padded row for left join retraction");
                 emitInsertPaddedRow(
                         input.getRowKind(), RowKind.INSERT, currentRows, emittedMatches, inputId);
-            }
+            }*/
 
             return true;
         }
@@ -480,6 +480,44 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         // ACTUAL JOIN
         if (depth == inputId) {
             System.out.println("depth == inputId");
+            // do we need not to update num of matches now?
+            boolean inputIsUpsert =
+                    input.getRowKind() == RowKind.INSERT
+                            || input.getRowKind() == RowKind.UPDATE_AFTER;
+            var inputRowKind = input.getRowKind();
+
+            /* RETRACT BEFORE INPUT */
+            if (inputIsUpsert && isLeftJoin && matches[depth - 1] == 0) {
+                System.out.println("/* RETRACT BEFORE INPUT */ No matches found at depth=" + depth + ", trying null padding");
+                System.out.println("Current matches array: " + Arrays.toString(matches));
+                // There were no matches, we now try with null padding
+                currentRows[depth] = nullRows.get(depth);
+                System.out.println(String.format("Null padded row at depth %d: %s",
+                        depth, currentRows[depth] != null ?
+                                String.format("kind=%s, fields=%s", currentRows[depth].getRowKind(), currentRows[depth]) : "null"));
+
+                // We have to call the recursive join again with the null-padded row to have a correct
+                // numOfMatches array
+                input.setRowKind(RowKind.DELETE);
+                depthMatched =
+                        recursiveMultiJoin(
+                                depth + 1,
+                                input,
+                                inputId,
+                                currentRows,
+                                allInputRecords,
+                                matches,
+                                emittedMatches,
+                                false, // we want to retract
+                                true);
+
+                if (depthMatched) {
+                    emittedMatches = matches.clone();
+                    System.out.println("Null padding matched at depth=" + depth + ", updated emittedMatches: " + Arrays.toString(emittedMatches));
+                }
+            }
+
+            /* EMITTING WITH THE ACTUAL INPUT */
             System.out.println("Processing input record at depth=" + depth);
             currentRows[depth] = input;
             System.out.println(String.format("Input record at depth %d: %s", 
@@ -491,27 +529,24 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
                 // If condition doesn't match, skip this record
                 boolean conditionMatches = outerJoinConditions[depth].apply(currentRows);
                 if (!conditionMatches) {
-                    System.out.println("depth == inputId: Left join condition not satisfied at depth=" + depth);
+                    System.out.println("Left join condition not satisfied at depth=" + depth);
                     return false;
                 }
 
-                /*// If condition matches or we're just recalculating num of matches, we only
+                // If condition matches or we're just recalculating num of matches, we only
                 // increase the number of matches
-                if (isUpsert) {
+                if (inputIsUpsert) {
                     matches[depth - 1]++;
-                    System.out.println(String.format("depth == inputId: Incremented matches for depth=%d, new count=%d, matches array: %s",
+                    System.out.println(String.format("Incremented matches for depth=%d, new count=%d, matches array: %s",
                             depth-1, matches[depth-1], Arrays.toString(matches)));
                 } else {
                     matches[depth - 1]--;
-                    System.out.println(String.format("depth == inputId: Decremented matches for depth=%d, new count=%d, matches array: %s",
+                    System.out.println(String.format("Decremented matches for depth=%d, new count=%d, matches array: %s",
                             depth-1, matches[depth-1], Arrays.toString(matches)));
-                }*/
+                }
             }
 
-            // do we need not to update num of matches now?
-            boolean inputIsUpsert =
-                    input.getRowKind() == RowKind.INSERT
-                            || input.getRowKind() == RowKind.UPDATE_AFTER;
+            input.setRowKind(inputRowKind);
             depthMatched =
                     recursiveMultiJoin(
                             depth + 1,
@@ -528,6 +563,41 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
                 emittedMatches = matches.clone();
                 System.out.println("Input record matched at depth=" + depth + ", updated emittedMatches: " + Arrays.toString(emittedMatches));
             }
+
+            /* INSERT PAD AFTER INPUT */
+            if (!inputIsUpsert && isLeftJoin && matches[depth - 1] == 0) {
+                System.out.println("/* RETRACT BEFORE INPUT */ No matches found at depth=" + depth + ", trying null padding");
+                System.out.println("Current matches array: " + Arrays.toString(matches));
+                // There were no matches, we now try with null padding
+                currentRows[depth] = nullRows.get(depth);
+                System.out.println(String.format("Null padded row at depth %d: %s",
+                        depth, currentRows[depth] != null ?
+                                String.format("kind=%s, fields=%s", currentRows[depth].getRowKind(), currentRows[depth]) : "null"));
+
+                // We have to call the recursive join again with the null-padded row to have a correct
+                // numOfMatches array
+                input.setRowKind(RowKind.INSERT);
+                depthMatched =
+                        recursiveMultiJoin(
+                                depth + 1,
+                                input,
+                                inputId,
+                                currentRows,
+                                allInputRecords,
+                                matches,
+                                emittedMatches,
+                                true, // we want to insert a padded row
+                                true);
+
+                if (depthMatched) {
+                    emittedMatches = matches.clone();
+                    System.out.println("Null padding matched at depth=" + depth + ", updated emittedMatches: " + Arrays.toString(emittedMatches));
+                }
+            }
+
+            // We have to set the row kind back to the original value so we add it to state
+            // properly after the join is finished
+            input.setRowKind(inputRowKind);
         }
 
         return depthMatched;
@@ -682,6 +752,8 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
                 if (!paddedRows[i].equals(currentRows[i])) {
                     rowsModified = true;
                 }
+                // If we already have associations at this depth and the current row we're padding
+                // doesn't actually match, there's no need to emit a retraction
             } else if (leftAssociations > 0 && !matches) {
                 shouldEmit = false;
             }
