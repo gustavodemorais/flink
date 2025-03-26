@@ -158,18 +158,11 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
     private void processElement(int inputId, RowData input, long timestamp) throws Exception {
         inputId = inputId - 1; // Convert to 0-based index
 
-        // Use multi-way join condition if available, otherwise use binary joins
-        if (multiJoinCondition != null) {
-            // First perform the join without adding the record to state
-            performMultiJoin(input, inputId);
+        // First perform the join
+        performMultiJoin(input, inputId);
 
-            // Then add the record to state for future joins
-            addRecordToState(inputId, input);
-        } else {
-            // For binary join approach, add to state first then perform join
-            addRecordToState(inputId, input);
-            performMultiBinaryJoin(input, inputId);
-        }
+        // Then add the record to state for future joins
+        addRecordToState(inputId, input);
 
         // todo gustavo updateCleanupTime(timestamp);
     }
@@ -185,56 +178,6 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             } else {
                 stateHandlers.get(inputId).addRecord(input);
             }
-        }
-    }
-
-    /**
-     * Performs a multi-way join by progressively joining pairs of inputs using binary join
-     * conditions. This approach builds the join result incrementally by: 0. This is a hash join:
-     * we're only joining records for each input with matching keys 1. Starting with records from
-     * the first input 2. Joining with the second input to produce intermediate results 3.
-     * Progressively joining intermediate results with each subsequent input 4. Creating new
-     * JoinedRowData objects at each step to represent partial results 5. Applying the appropriate
-     * binary join condition at each step 6. Terminating early if any join step produces empty
-     * results 7. We store one set of intermediate results in memory and keep updating it
-     */
-    private void performMultiBinaryJoin(RowData input, int inputId) throws Exception {
-        // Start with initial records from first input
-        List<RowData> intermediateResults = new ArrayList<>();
-        collectRecords(
-                inputId == 0
-                        ? Collections.singleton(input).iterator()
-                        : stateHandlers.get(0).getRecords(),
-                intermediateResults);
-
-        // Progressive join with each subsequent input
-        for (int i = 1; i < inputSpecs.size() && !intermediateResults.isEmpty(); i++) {
-            List<RowData> nextResults = new ArrayList<>();
-            JoinCondition condition = joinConditions.get(i);
-
-            // Get records from current input
-            Iterator<RowData> otherSideRecords =
-                    i == inputId
-                            ? Collections.singleton(input).iterator()
-                            : stateHandlers.get(i).getRecords();
-
-            // Join each left record with matching right records
-            for (RowData left : intermediateResults) {
-                while (otherSideRecords.hasNext()) {
-                    var right = otherSideRecords.next();
-                    if (condition.apply(left, right)) {
-                        var outRow = new JoinedRowData(left.getRowKind(), left, right);
-                        // If we're not at the last input, store the joined row for further joining
-                        if (i < inputSpecs.size() - 1) {
-                            nextResults.add(outRow);
-                        } else {
-                            // If we're at the last input, emit the final joined row
-                            collector.collect(outRow);
-                        }
-                    }
-                }
-            }
-            intermediateResults = nextResults;
         }
     }
 
@@ -516,15 +459,6 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             matches[depth - 1]++;
         } else {
             matches[depth - 1]--;
-        }
-    }
-
-    /**
-     * Collect records from an iterator into a target list.
-     */
-    private void collectRecords(Iterator<RowData> records, List<RowData> target) throws Exception {
-        while (records.hasNext()) {
-            target.add(records.next());
         }
     }
 
