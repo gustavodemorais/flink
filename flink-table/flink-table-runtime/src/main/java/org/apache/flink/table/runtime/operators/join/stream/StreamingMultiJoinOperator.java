@@ -142,7 +142,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         // We perform the multi-way join for the input streams
         performMultiJoin(input, inputId);
 
-        addRecordToState(inputId, input);
+        addRecordToState(input, inputId);
         updateCleanupTime(timestamp);
     }
 
@@ -235,13 +235,9 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
                 associations[depth] = 0;
             }
 
-            boolean matched2 = recursiveMultiJoin(
+            matched = recursiveMultiJoin(
                     depth + 1, input, inputId, currentRows,
                     associations, phase);
-
-            if (matched2) {
-                matched = true;
-            }
         }
 
         return matched;
@@ -325,7 +321,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         return matched;
     }
 
-    private void addRecordToState(int inputId, RowData input) throws Exception {
+    private void addRecordToState(RowData input, int inputId) throws Exception {
         if (isRetraction(input)) {
             stateHandlers.get(inputId).retractRecord(input);
         } else {
