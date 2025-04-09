@@ -15,7 +15,8 @@ import org.apache.flink.table.data.GenericRowData;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.utils.JoinedRowData;
 import org.apache.flink.table.runtime.generated.MultiJoinCondition;
-import org.apache.flink.table.runtime.operators.join.stream.state.MultiJoinStateHandlers.*;
+import org.apache.flink.table.runtime.operators.join.stream.state.JoinRecordStateView;
+import org.apache.flink.table.runtime.operators.join.stream.state.JoinRecordStateViews;
 import org.apache.flink.table.runtime.operators.join.stream.utils.JoinInputSideSpec;
 import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
 import org.apache.flink.types.RowKind;
@@ -53,13 +54,10 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
     private final boolean isFullOuterJoin;
     private final MultiJoinCondition[] outerJoinConditions;
 
-    private transient List<MultiJoinStateHandler> stateHandlers;
+    private transient List<JoinRecordStateView> stateHandlers;
     private transient ValueState<Long> cleanupTimeState;
     private transient TimestampedCollector<RowData> collector;
     private transient List<RowData> nullRows;
-
-    // TODO gustavo get rid
-    private final List<KeySelector<RowData, String>> dummyKeySelectors;
 
     /**
      * Represents the different phases of the join process.
@@ -91,7 +89,6 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             StreamOperatorParameters<RowData> parameters,
             List<InternalTypeInfo<RowData>> inputTypes,
             List<JoinInputSideSpec> inputSpecs,
-            List<KeySelector<RowData, String>> dummyKeySelectors,
             List<JoinRelType> joinTypes,
             MultiJoinCondition multiJoinCondition,
             boolean[] filterNulls,
@@ -101,7 +98,6 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         super(parameters, inputSpecs.size());
         this.inputTypes = inputTypes;
         this.inputSpecs = inputSpecs;
-        this.dummyKeySelectors = dummyKeySelectors;
         this.joinTypes = joinTypes;
         this.multiJoinCondition = multiJoinCondition;
         this.filterNulls = filterNulls;
@@ -214,10 +210,12 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             int[] associations, JoinPhase phase, boolean isLeftJoin) throws Exception {
         
         boolean matched = false;
-        JoinRecordIterator recordIterator = stateHandlers.get(depth).getRecordsWithAssociations();
 
-        while (recordIterator.hasNext()) {
-            currentRows[depth] = recordIterator.next();
+        //TODO We might have to change the current state key again setCurrentKey("TODO");
+        Iterable<RowData> records = stateHandlers.get(depth).getRecords();
+        
+            for (RowData record : records) {
+            currentRows[depth] = record;
 
             if (isLeftJoin) {
                 if (!matchesOuterCondition(depth, currentRows)) {
@@ -321,13 +319,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         if (isRetraction(input)) {
             stateHandlers.get(inputId).retractRecord(input);
         } else {
-            if (stateHandlers.get(inputId) instanceof MultiOuterJoinStateHandler) {
-                var outStateHandler = ((MultiOuterJoinStateHandler) stateHandlers.get(inputId));
-                var associations = outStateHandler.getRecordAssociations(input);
-                outStateHandler.addRecord(input, associations);
-            } else {
-                stateHandlers.get(inputId).addRecord(input);
-            }
+            stateHandlers.get(inputId).addRecord(input);
         }
     }
 
@@ -350,21 +342,26 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         }
     }
 
-    private void initializeStateHandlers() throws Exception {
+    private void initializeStateHandlers() throws Exception
+    {
+        // TODO Gustavo, should we set this here?
+        if(this.stateHandler.getKeyedStateStore().isPresent()) {
+            getRuntimeContext().setKeyedStateStore(this.stateHandler.getKeyedStateStore().get());
+        } else {
+            throw new RuntimeException("Keyed state store not found when initializing keyed state store handlers.");
+        }
+
         this.stateHandlers = new ArrayList<>(inputSpecs.size());
         for (int i = 0; i < inputSpecs.size(); i++) {
-            MultiJoinStateHandler handler =
-                    new MultiOuterJoinStateHandler(
-                            i,
-                            this,
-                            dummyKeySelectors.get(i),
-                            this.stateHandler,
-                            getOperatorConfig().getConfiguration(),
-                            getUserCodeClassloader(),
-                            inputSpecs.get(i),
-                            inputTypes.get(i),
-                            stateRetentionTime[i]);
-            stateHandlers.add(handler);
+            JoinRecordStateView stateView;
+            String stateName = "multi-join-input-" + i;
+            stateView = JoinRecordStateViews.create(
+                    getRuntimeContext(),
+                    stateName,
+                    inputSpecs.get(i),
+                    inputTypes.get(i),
+                    stateRetentionTime[i]);
+            stateHandlers.add(stateView);
             inputs.add(createInput(i + 1));
         }
     }

@@ -55,7 +55,6 @@ public abstract class StreamingMultiJoinOperatorTestBase {
     protected final List<GeneratedMultiJoinCondition> outerJoinConditions;
     protected final boolean isFullOuterJoin;
     protected final InternalTypeInfo<RowData> joinKeyTypeInfo;
-    protected final List<KeySelector<RowData, String>> dummyKeySelectors;
 
     // ==========================================================================
     // Test State
@@ -84,7 +83,6 @@ public abstract class StreamingMultiJoinOperatorTestBase {
         initializeOuterJoinConditions();
 
         this.joinKeyTypeInfo = InternalTypeInfo.of(new CharType(false, 20));
-        this.dummyKeySelectors = createDummyKeySelectors();
     }
 
     // ==========================================================================
@@ -212,11 +210,23 @@ public abstract class StreamingMultiJoinOperatorTestBase {
     // ==========================================================================
 
     private void initializeInputs(int numInputs) {
-        for (int i = 0; i < numInputs; i++) {
+        if (numInputs < 2) {
+            throw new IllegalArgumentException("Number of inputs must be at least 2");
+        }
+
+        // In our test, the first input is always the one with the unique key as a join key
+        inputTypeInfos.add(createInputTypeInfo(0));
+        keySelectors.add(createKeySelector(0));
+        inputSpecs.add(
+                JoinInputSideSpec.withUniqueKeyContainedByJoinKey(
+                        inputTypeInfos.get(0), keySelectors.get(0)));
+
+        // Following tables contain a unique key but are not contained in the join key
+        for (int i = 1; i < numInputs; i++) {
             inputTypeInfos.add(createInputTypeInfo(i));
             keySelectors.add(createKeySelector(i));
             inputSpecs.add(
-                    JoinInputSideSpec.withUniqueKeyContainedByJoinKey(
+                    JoinInputSideSpec.withUniqueKey(
                             inputTypeInfos.get(i), keySelectors.get(i)));
         }
     }
@@ -269,20 +279,24 @@ public abstract class StreamingMultiJoinOperatorTestBase {
         for (int i = 0; i < this.inputSpecs.size(); i++) {
             // TODO Gustavo The key selector for the state has to be always 0
             // Because we want to all arrows associated with the id 0
+            // This depends on the join condition and is 0 here because we're always joining baed on the first column
 
-            // this is used to partition state, figure out how to do it properly
-            // we need one per input? hm idk
-            KeySelector<RowData, String> keySelector = row -> row.getString(0).toString();
+            final int keyIndex = 0;
+            KeySelector<RowData, String> keySelector = row -> row.getString(keyIndex).toString();
             harness.setKeySelector(i, keySelector);
         }
     }
 
     protected KeyedMultiInputStreamOperatorTestHarness<String, RowData> createTestHarness()
             throws Exception {
-        return new KeyedMultiInputStreamOperatorTestHarness<>(
+        KeyedMultiInputStreamOperatorTestHarness<String, RowData> harness = new KeyedMultiInputStreamOperatorTestHarness<>(
                 new MultiStreamingJoinOperatorFactory(
-                        inputSpecs, dummyKeySelectors, inputTypeInfos, joinTypes, outerJoinConditions, isFullOuterJoin),
+                        inputSpecs, inputTypeInfos, joinTypes, outerJoinConditions, isFullOuterJoin),
                 TypeInformation.of(String.class));
+        
+        // Setup key selectors for each input
+        setupKeySelectorsForTestHarness(harness);
+        return harness;
     }
 
     protected RowType getOutputType() {
@@ -312,7 +326,6 @@ public abstract class StreamingMultiJoinOperatorTestBase {
             extends AbstractStreamOperatorFactory<RowData> {
 
         private final List<JoinInputSideSpec> inputSpecs;
-        private final List<KeySelector<RowData, String>> dummyKeySelectors;
         private final List<InternalTypeInfo<RowData>> inputTypeInfos;
         private final List<JoinRelType> joinTypes;
         private final List<GeneratedMultiJoinCondition> outerJoinConditions;
@@ -320,13 +333,11 @@ public abstract class StreamingMultiJoinOperatorTestBase {
 
         public MultiStreamingJoinOperatorFactory(
                 List<JoinInputSideSpec> inputSpecs,
-                List<KeySelector<RowData, String>> dummyKeySelectors,
                 List<InternalTypeInfo<RowData>> inputTypeInfos,
                 List<JoinRelType> joinTypes,
                 List<GeneratedMultiJoinCondition> outerJoinConditions,
                 boolean isFullOuterJoin) {
             this.inputSpecs = inputSpecs;
-            this.dummyKeySelectors = dummyKeySelectors;
             this.inputTypeInfos = inputTypeInfos;
             this.joinTypes = joinTypes;
             this.outerJoinConditions = outerJoinConditions;
@@ -337,7 +348,7 @@ public abstract class StreamingMultiJoinOperatorTestBase {
         public <T extends StreamOperator<RowData>> T createStreamOperator(
                 StreamOperatorParameters<RowData> parameters) {
             StreamingMultiJoinOperator op = createJoinOperator(
-                    parameters, inputSpecs, dummyKeySelectors, inputTypeInfos, joinTypes, outerJoinConditions);
+                    parameters, inputSpecs, inputTypeInfos, joinTypes, outerJoinConditions);
             return (T) op;
         }
 
@@ -350,7 +361,6 @@ public abstract class StreamingMultiJoinOperatorTestBase {
         private StreamingMultiJoinOperator createJoinOperator(
                 StreamOperatorParameters<RowData> parameters,
                 List<JoinInputSideSpec> inputSpecs,
-                List<KeySelector<RowData, String>> dummyKeySelectors,
                 List<InternalTypeInfo<RowData>> inputTypeInfos,
                 List<JoinRelType> joinTypes,
                 List<GeneratedMultiJoinCondition> outerJoinConditions) {
@@ -366,7 +376,6 @@ public abstract class StreamingMultiJoinOperatorTestBase {
                     parameters,
                     inputTypeInfos,
                     inputSpecs,
-                    dummyKeySelectors,
                     joinTypes,
                     multiJoinCondition,
                     filterNulls,
@@ -413,7 +422,7 @@ public abstract class StreamingMultiJoinOperatorTestBase {
 
     protected RowDataKeySelector createKeySelector(int inputIndex) {
         return HandwrittenSelectorUtil.getRowDataSelector(
-                new int[] {0},
+                new int[] {inputIndex == 0 ? 0 : 1}, // TODO Gustavo hard coded to the use case,
                 inputTypeInfos.get(inputIndex)
                         .toRowType()
                         .getChildren()

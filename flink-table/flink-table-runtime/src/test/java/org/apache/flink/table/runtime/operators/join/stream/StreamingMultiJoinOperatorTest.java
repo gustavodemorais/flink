@@ -31,7 +31,7 @@ class StreamingTwoWayInnerMultiJoinOperatorTest extends StreamingMultiJoinOperat
     void testTwoWayInnerJoin() throws Exception {
         /* -------- APPEND TESTS ----------- */
 
-        // Users without orders aren't emitted
+    // Users without orders aren't emitted
         insertUser("1", "Gus", "User 1 Details");
         emitsNothing();
 
@@ -247,20 +247,21 @@ class StreamingTwoWayOuterMultiJoinOperatorTest extends StreamingMultiJoinOperat
                                 "Gus",
                                 "User 1 Details Updated 2",
                                 "1",
-                                "order_1",
-                                "Order 1 Details Updated 2"),
-                DELETE,
-                        r(
-                                "1",
-                                "Gus",
-                                "User 1 Details Updated 2",
-                                "1",
                                 "order_2",
-                                "Order 2 Details"));
+                                "Order 2 Details"),
+                DELETE,
+                r(
+                        "1",
+                        "Gus",
+                        "User 1 Details Updated 2",
+                        "1",
+                        "order_1",
+                        "Order 1 Details Updated 2"));
 
         // New user with same key joins with both orders
         insertUser("1", "Dawid", "User 3 Details");
         emits(
+                INSERT, r("1", "Dawid", "User 3 Details", "1", "order_2", "Order 2 Details"),
                 INSERT,
                         r(
                                 "1",
@@ -268,8 +269,7 @@ class StreamingTwoWayOuterMultiJoinOperatorTest extends StreamingMultiJoinOperat
                                 "User 3 Details",
                                 "1",
                                 "order_1",
-                                "Order 1 Details Updated 2"),
-                INSERT, r("1", "Dawid", "User 3 Details", "1", "order_2", "Order 2 Details"));
+                                "Order 1 Details Updated 2"));
     }
 }
 
