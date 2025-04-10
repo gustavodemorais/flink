@@ -21,7 +21,8 @@ import org.apache.flink.table.runtime.operators.join.stream.utils.JoinInputSideS
 import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
 import org.apache.flink.types.RowKind;
 
-// TODO Gustavo we probably shouldn't be importing calcite stuff here and we have a somewhere
+// TODO Gustavo Confirm we should create a private custom enum for join types
+//  instead of using Calcite's JoinRelType
 import org.apache.calcite.rel.core.JoinRelType;
 
 import java.util.ArrayList;
