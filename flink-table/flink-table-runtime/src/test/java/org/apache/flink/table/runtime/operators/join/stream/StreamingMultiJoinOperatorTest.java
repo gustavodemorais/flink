@@ -1,10 +1,11 @@
 package org.apache.flink.table.runtime.operators.join.stream;
 
-import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.flink.table.runtime.generated.GeneratedMultiJoinCondition;
 import org.apache.flink.testutils.junit.extensions.parameterized.Parameter;
 import org.apache.flink.testutils.junit.extensions.parameterized.ParameterizedTestExtension;
 import org.apache.flink.testutils.junit.extensions.parameterized.Parameters;
+
+import org.apache.calcite.rel.core.JoinRelType;
 import org.junit.jupiter.api.TestTemplate;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -31,7 +32,7 @@ class StreamingTwoWayInnerMultiJoinOperatorTest extends StreamingMultiJoinOperat
     void testTwoWayInnerJoin() throws Exception {
         /* -------- APPEND TESTS ----------- */
 
-    // Users without orders aren't emitted
+        // Users without orders aren't emitted
         insertUser("1", "Gus", "User 1 Details");
         emitsNothing();
 
@@ -242,13 +243,7 @@ class StreamingTwoWayOuterMultiJoinOperatorTest extends StreamingMultiJoinOperat
         deleteUser("1", "Gus", "User 1 Details Updated 2");
         emits(
                 DELETE,
-                        r(
-                                "1",
-                                "Gus",
-                                "User 1 Details Updated 2",
-                                "1",
-                                "order_2",
-                                "Order 2 Details"),
+                r("1", "Gus", "User 1 Details Updated 2", "1", "order_2", "Order 2 Details"),
                 DELETE,
                 r(
                         "1",
@@ -285,7 +280,11 @@ class StreamingThreeWayJoinOperatorTest extends StreamingMultiJoinOperatorTestBa
 
     public StreamingThreeWayJoinOperatorTest() {
         // For inner join test, set outerJoinFlags to false for all inputs
-        super(3, List.of(JoinRelType.INNER, JoinRelType.INNER, JoinRelType.INNER), defaultConditions(), false);
+        super(
+                3,
+                List.of(JoinRelType.INNER, JoinRelType.INNER, JoinRelType.INNER),
+                defaultConditions(),
+                false);
     }
 
     /**
@@ -494,16 +493,21 @@ class StreamingThreeWayOuterJoinOperatorTest extends StreamingMultiJoinOperatorT
     @Parameter private boolean enableAsyncState;
 
     public StreamingThreeWayOuterJoinOperatorTest() {
-        super(3, List.of(JoinRelType.INNER, JoinRelType.LEFT, JoinRelType.LEFT), defaultConditions(), false);
+        super(
+                3,
+                List.of(JoinRelType.INNER, JoinRelType.LEFT, JoinRelType.LEFT),
+                defaultConditions(),
+                false);
     }
 
     /**
      * -- Test three-way left outer join with nulls and changelog transitions
      *
-     * SQL: SELECT u.*, o.*, p.* FROM Users u LEFT OUTER JOIN Orders o ON u.user_id = o.user_id LEFT OUTER
-     * JOIN Payments p ON o.user_id = p.user_id
+     * <p>SQL: SELECT u.*, o.*, p.* FROM Users u LEFT OUTER JOIN Orders o ON u.user_id = o.user_id
+     * LEFT OUTER JOIN Payments p ON o.user_id = p.user_id
      *
-     * Schema: Users(user_id PRIMARY KEY, name, details) Orders(user_id, order_id PRIMARY KEY, name) Payments(user_id, payment_id PRIMARY KEY, name)
+     * <p>Schema: Users(user_id PRIMARY KEY, name, details) Orders(user_id, order_id PRIMARY KEY,
+     * name) Payments(user_id, payment_id PRIMARY KEY, name)
      */
     @TestTemplate
     void testThreeWayLeftOuterJoin() throws Exception {
@@ -1122,12 +1126,12 @@ class StreamingThreeWayOuterJoinOperatorTest extends StreamingMultiJoinOperatorT
                         "2",
                         "payment_3",
                         "Payment 3 Details"));
-
     }
 }
 
 @ExtendWith(ParameterizedTestExtension.class)
-class StreamingThreeWayOuterJoinCustomConditionOperatorTest extends StreamingMultiJoinOperatorTestBase {
+class StreamingThreeWayOuterJoinCustomConditionOperatorTest
+        extends StreamingMultiJoinOperatorTestBase {
 
     @Parameters(name = "enableAsyncState = {0}")
     public static List<Boolean> enableAsyncState() {
@@ -1136,24 +1140,30 @@ class StreamingThreeWayOuterJoinCustomConditionOperatorTest extends StreamingMul
 
     @Parameter private boolean enableAsyncState;
 
-    // This condition joins ON user.user_id = payment.user_id instead of ON order.user_id = payment.user_id
-    private static final List<GeneratedMultiJoinCondition> customJoinCondition = Arrays.asList(
-            null,
-            createMultiJoinOuterJoinCondition(1, 0),
-            createMultiJoinOuterJoinCondition(2, 0));
+    // This condition joins ON user.user_id = payment.user_id instead of ON order.user_id =
+    // payment.user_id
+    private static final List<GeneratedMultiJoinCondition> customJoinCondition =
+            Arrays.asList(
+                    null,
+                    createMultiJoinOuterJoinCondition(1, 0),
+                    createMultiJoinOuterJoinCondition(2, 0));
 
     public StreamingThreeWayOuterJoinCustomConditionOperatorTest() {
-        super(3, List.of(JoinRelType.INNER, JoinRelType.LEFT, JoinRelType.LEFT),
-                customJoinCondition, false);
+        super(
+                3,
+                List.of(JoinRelType.INNER, JoinRelType.LEFT, JoinRelType.LEFT),
+                customJoinCondition,
+                false);
     }
 
     /**
      * -- Test three-way left outer join with nulls and changelog transitions
      *
-     * SQL: SELECT u.*, o.*, p.* FROM Users u LEFT OUTER JOIN Orders o ON u.user_id = o.user_id LEFT OUTER
-     * JOIN Payments p ON u.user_id = p.user_id <- This is the core difference here
+     * <p>SQL: SELECT u.*, o.*, p.* FROM Users u LEFT OUTER JOIN Orders o ON u.user_id = o.user_id
+     * LEFT OUTER JOIN Payments p ON u.user_id = p.user_id <- This is the core difference here
      *
-     * Schema: Users(user_id PRIMARY KEY, name, details) Orders(user_id, order_id PRIMARY KEY, name) Payments(user_id, payment_id PRIMARY KEY, name)
+     * <p>Schema: Users(user_id PRIMARY KEY, name, details) Orders(user_id, order_id PRIMARY KEY,
+     * name) Payments(user_id, payment_id PRIMARY KEY, name)
      */
     @TestTemplate
     void testThreeWayLeftOuterJoinCustomCondition() throws Exception {
@@ -1214,9 +1224,14 @@ class StreamingThreeWayOuterJoinCustomConditionOperatorTest extends StreamingMul
         // +U on order removes null result and emits join
         updateAfterOrder("1", "order_1", "Order 1 Details Updated");
         emits(
-                DELETE, r(
-                        "1", "Gus", "User 1 Details",
-                        null, null, null,
+                DELETE,
+                r(
+                        "1",
+                        "Gus",
+                        "User 1 Details",
+                        null,
+                        null,
+                        null,
                         "1",
                         "payment_1",
                         "Payment 1 Details"),
@@ -1231,6 +1246,5 @@ class StreamingThreeWayOuterJoinCustomConditionOperatorTest extends StreamingMul
                         "1",
                         "payment_1",
                         "Payment 1 Details"));
-
     }
 }
