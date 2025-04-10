@@ -211,7 +211,13 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         
         boolean matched = false;
 
-        //TODO We might have to change the current state key again setCurrentKey("TODO");
+        // TODO Gustavo We might have to change the current state key again here if the next input joins
+        // In other words, we have to start at the input and based on the join conditions
+        // intelligently set the current key for the inputs by jumping to the related input
+        // We might have to have multiple indexes for inputs - imagine a b join and ab c join where
+        // c joins on both attributes of a and b - we preferably want to only iterate on keys that
+        // match both join attributes
+        // setCurrentKey("TODO");
         Iterable<RowData> records = stateHandlers.get(depth).getRecords();
         
             for (RowData record : records) {
