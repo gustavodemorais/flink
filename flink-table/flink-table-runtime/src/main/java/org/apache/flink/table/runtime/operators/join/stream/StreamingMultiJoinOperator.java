@@ -355,14 +355,6 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
     private transient TimestampedCollector<RowData> collector;
     private transient List<RowData> nullRows;
 
-    /** Represents the different phases of the join process. */
-    private enum JoinPhase {
-        /** Phase where we calculate match counts (associations) without emitting results. */
-        CALCULATE_MATCHES,
-        /** Phase where we emit the actual join results. */
-        EMIT_RESULTS
-    }
-
     public StreamingMultiJoinOperator(
             StreamOperatorParameters<RowData> parameters,
             List<InternalTypeInfo<RowData>> inputTypes,
@@ -412,7 +404,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         RowData[] currentRows = new RowData[inputSpecs.size()];
 
         recursiveMultiJoin(
-                0, input, inputId, currentRows, associations, JoinPhase.CALCULATE_MATCHES);
+                0, input, inputId, currentRows, associations, false);
     }
 
     /**
@@ -428,7 +420,8 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
      * @param associations An array used for LEFT joins to track match counts. `associations[d]`
      *     stores the number of successful matches found for `currentRows[d]` against inputs `d+1`
      *     onwards based on outer join conditions.
-     * @param phase The current execution phase (CALCULATE_MATCHES or EMIT_RESULTS).
+     * @param shouldEmit True when currentRows contain the new added input record, and we should
+     * emmit matching join row combinations.
      * @throws Exception If state access or condition evaluation fails.
      */
     private void recursiveMultiJoin(
@@ -437,11 +430,13 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             int inputId,
             RowData[] currentRows,
             int[] associations,
-            JoinPhase phase)
+            boolean shouldEmit)
             throws Exception {
-        // Base case: If we've processed all inputs, evaluate the final join condition.
+        // Base case: If we've processed all inputs, emit if not in calculation-only phase.
         if (isMaxDepth(depth)) {
-            emitJoinedRow(input, currentRows);
+            if (shouldEmit) {
+                emitJoinedRow(input, currentRows);
+            }
             return;
         }
         boolean isLeftJoin = isLeftJoinAtDepth(depth);
@@ -451,10 +446,12 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         // We store matched here because we need to know if we need to do emit a null padded output
         // if there were no matching records.
         boolean matched =
-                processRecords(depth, input, inputId, currentRows, associations, phase, isLeftJoin);
+                processRecords(depth, input, inputId, currentRows, associations,
+                        shouldEmit, isLeftJoin);
 
         // If the current depth is the one where the triggering input record arrived,
         // now process the input record itself with the current combination of rows we are at.
+        // processInputRecord will handle transitioning to the "emit results" mode (shouldEmit = false).
         if (isInputLevel(depth, inputId)) {
             processInputRecord(depth, input, inputId, currentRows, associations, matched);
         } else if (isLeftJoin && !matched) {
@@ -462,7 +459,8 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             // associations, process with null padding for the current depth. In other words,
             // we emit null for this level. This is important so we continue to the join
             // with the output of this join level, which is a null padded row.
-            processWithNullPadding(depth, input, inputId, currentRows, associations, phase);
+            // Continue with the same shouldEmit.
+            processWithNullPadding(depth, input, inputId, currentRows, associations, shouldEmit);
         }
     }
 
@@ -478,7 +476,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             int inputId,
             RowData[] currentRows,
             int[] associations,
-            JoinPhase phase,
+            boolean shouldEmit,
             boolean isLeftJoin)
             throws Exception {
         boolean matched = false; // Tracks if any record at this depth matched the condition
@@ -516,7 +514,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             // This information is crucial for determining if null padding is needed later.
             if (isLeftJoin) {
                 updateAssociationCount(
-                        depth, associations, shouldIncrementAssociation(phase, input));
+                        depth, associations, shouldIncrementAssociation(shouldEmit, input));
 
                 // Optimization: further recursion or counting might be skippable under
                 // specific conditions detailed in `canOptimizeAssociationCounting`.
@@ -536,11 +534,11 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             // levels (joins to the right) is not needed for this specific count at this stage,
             // as the input record's participation and further joins are handled by
             // `processInputRecord` or subsequent recursive calls in the `EMIT_RESULTS` phase.
-            if (phase == JoinPhase.CALCULATE_MATCHES && isInputLevel(depth, inputId)) {
+            if (!shouldEmit && isInputLevel(depth, inputId)) {
                 continue;
             }
 
-            recursiveMultiJoin(depth + 1, input, inputId, currentRows, associations, phase);
+            recursiveMultiJoin(depth + 1, input, inputId, currentRows, associations, shouldEmit);
         }
 
         // Returns whether any record at this level matched the local condition.
@@ -557,7 +555,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
             int inputId,
             RowData[] currentRows,
             int[] associations,
-            JoinPhase phase)
+            boolean shouldEmit)
             throws Exception {
 
         // Recursion continues with a null row at the current depth. This means the current join
@@ -565,7 +563,8 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         // By continuing the recursion, we allow those deeper conditions to be evaluated and
         // ensures that the null padding correctly propagates to the join chain.
         currentRows[depth] = nullRows.get(depth);
-        recursiveMultiJoin(depth + 1, input, inputId, currentRows, associations, phase);
+        recursiveMultiJoin(depth + 1, input, inputId, currentRows, associations,
+                shouldEmit);
     }
 
     private void processInputRecord(
@@ -589,7 +588,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         // retraction.
         if (isLeftJoin) {
             updateAssociationCount(
-                    depth, associations, shouldIncrementAssociation(JoinPhase.EMIT_RESULTS, input));
+                    depth, associations, shouldIncrementAssociation(true, input));
         }
 
         // --- Left Join Retraction Handling ---
@@ -606,7 +605,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         // found should lead to output generation or retractions.
         currentRows[depth] = input;
         recursiveMultiJoin(
-                depth + 1, input, inputId, currentRows, associations, JoinPhase.EMIT_RESULTS);
+                depth + 1, input, inputId, currentRows, associations, true);
 
         // --- Left Join Insertion Handling ---
         // If an incoming DELETE/UPDATE_BEFORE on the right side of a LEFT join removes
@@ -628,7 +627,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
 
         // Recurse to emit the potential retraction for the previously null-padded row.
         recursiveMultiJoin(
-                depth + 1, input, inputId, currentRows, associations, JoinPhase.EMIT_RESULTS);
+                depth + 1, input, inputId, currentRows, associations, true);
 
         // Restore the input record's original RowKind to prevent unintended side effects,
         // as the `input` object itself was temporarily modified.
@@ -646,7 +645,7 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
 
         // Recurse to emit the potential insertion for the new null-padded row.
         recursiveMultiJoin(
-                depth + 1, input, inputId, currentRows, associations, JoinPhase.EMIT_RESULTS);
+                depth + 1, input, inputId, currentRows, associations, true);
 
         // Restore the input record's original RowKind to prevent unintended side effects,
         // as the `input` object itself was temporarily modified.
@@ -761,8 +760,8 @@ public class StreamingMultiJoinOperator extends AbstractStreamOperatorV2<RowData
         }
     }
 
-    private boolean shouldIncrementAssociation(JoinPhase phase, RowData input) {
-        return phase == JoinPhase.CALCULATE_MATCHES || isUpsert(input);
+    private boolean shouldIncrementAssociation(boolean shouldEmit, RowData input) {
+        return !shouldEmit || isUpsert(input);
     }
 
     private int[] createInitialAssociations() {
