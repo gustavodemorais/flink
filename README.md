@@ -215,3 +215,17 @@ Most Flink connectors have been externalized to individual repos under the [Apac
 
 Apache Flink is an open source project of The Apache Software Foundation (ASF).
 The Apache Flink project originated from the [Stratosphere](http://stratosphere.eu) research project.
+
+# MJ Benchmark
+How to run
+
+Start kafka
+docker-compose up -d
+./reset-kafka-topics.sh
+./build-target/bin/stop-cluster.sh
+./build-target/bin/start-cluster.sh
+./build-target/bin/taskmanager.sh start
+./build-target/bin/taskmanager.sh start
+./build-target/bin/sql-client.sh -j /Users/gdemorais/qdev/flink2/build-target/lib/flink-sql-connector-kafka-4.0-SNAPSHOT.jar -f benchmark-updating.sql
+
+Comments about the test types in the commits
