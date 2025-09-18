@@ -24,7 +24,7 @@ import org.apache.flink.table.planner.plan.nodes.physical.batch.{BatchPhysicalGr
 import org.apache.flink.table.planner.plan.nodes.physical.common.CommonPhysicalLookupJoin
 import org.apache.flink.table.planner.plan.nodes.physical.stream._
 import org.apache.flink.table.planner.plan.schema.IntermediateRelTable
-import org.apache.flink.table.planner.plan.utils.{FlinkRexUtil, RankUtil, UpsertKeyUtil}
+import org.apache.flink.table.planner.plan.utils.{FlinkRexUtil, RankUtil}
 
 import com.google.common.collect.ImmutableSet
 import org.apache.calcite.plan.hep.HepRelVertex
@@ -264,12 +264,58 @@ class FlinkRelMdUpsertKeys private extends MetadataHandler[UpsertKeys] {
 
     FlinkRelMdUniqueKeys.INSTANCE.getJoinUniqueKeys(
       join.joinType,
-      leftType,
+      leftType.getFieldCount,
       leftUpsertKeys,
       rightUpsertKeys,
       areColumnsUpsertKeys(leftUpsertKeys, leftJoinKeys),
       rightUpsertKeys != null
     )
+  }
+
+  def getUpsertKeys(
+      multiJoin: StreamPhysicalMultiJoin,
+      mq: RelMetadataQuery): JSet[ImmutableBitSet] = {
+    val fmq = FlinkRelMetadataQuery.reuseOrCreate(mq)
+    val inputs = multiJoin.getInputs
+    val joinTypes = multiJoin.getJoinTypes
+
+    if (inputs.size < 2) {
+      return null
+    }
+
+    // Start with the first input as the left side
+    var leftFieldCount = inputs.get(0).getRowType.getFieldCount
+    var leftUpsert = fmq.getUpsertKeys(inputs.get(0))
+
+    // Iteratively join each subsequent input
+    for (i <- 1 until inputs.size) {
+      val rightInput = inputs.get(i)
+      val rightUpsert = fmq.getUpsertKeys(rightInput)
+      val joinRelType = joinTypes.get(i)
+
+      // Get distribution keys for both sides
+      val distributionKeysLeft = multiJoin.getCommonJoinKeyIndices(0)
+      val distributionKeysRight = multiJoin.getCommonJoinKeyIndices(i)
+
+      val distributionLeft = ImmutableBitSet.of(distributionKeysLeft: _*)
+      val distributionRight = ImmutableBitSet.of(distributionKeysRight: _*)
+
+      // Calculate upsert keys for this join operation
+      leftUpsert = FlinkRelMdUniqueKeys.INSTANCE.getJoinUniqueKeys(
+        joinRelType,
+        leftFieldCount,
+        filterKeys(leftUpsert, distributionLeft),
+        filterKeys(rightUpsert, distributionRight),
+        areColumnsUpsertKeys(leftUpsert, distributionLeft),
+        areColumnsUpsertKeys(rightUpsert, distributionRight)
+      )
+
+      // Update field count for the next iteration
+      // The result of this join will have leftFieldCount + rightInput.getRowType.getFieldCount fields
+      leftFieldCount += rightInput.getRowType.getFieldCount
+    }
+
+    leftUpsert
   }
 
   private def getJoinUpsertKeys(
@@ -283,7 +329,7 @@ class FlinkRelMdUpsertKeys private extends MetadataHandler[UpsertKeys] {
     val rightKeys = fmq.getUpsertKeys(right)
     FlinkRelMdUniqueKeys.INSTANCE.getJoinUniqueKeys(
       joinRelType,
-      left.getRowType,
+      left.getRowType.getFieldCount,
       filterKeys(leftKeys, joinInfo.leftSet),
       filterKeys(rightKeys, joinInfo.rightSet),
       areColumnsUpsertKeys(leftKeys, joinInfo.leftSet),

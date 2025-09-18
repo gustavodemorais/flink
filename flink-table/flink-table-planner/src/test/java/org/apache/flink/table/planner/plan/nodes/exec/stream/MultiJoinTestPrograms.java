@@ -18,7 +18,9 @@
 
 package org.apache.flink.table.planner.plan.nodes.exec.stream;
 
+import org.apache.flink.table.api.config.ExecutionConfigOptions;
 import org.apache.flink.table.api.config.OptimizerConfigOptions;
+import org.apache.flink.table.connector.ChangelogMode;
 import org.apache.flink.table.test.program.SinkTestStep;
 import org.apache.flink.table.test.program.SourceTestStep;
 import org.apache.flink.table.test.program.TableTestProgram;
@@ -1143,5 +1145,69 @@ public class MultiJoinTestPrograms {
                                     + "SELECT u.user_id, u.name, o.order_id "
                                     + "FROM UsersNullSafe u "
                                     + "INNER JOIN OrdersNullSafe o ON u.user_id IS NOT DISTINCT FROM o.user_id")
+                    .build();
+
+    static final TableTestProgram TEST =
+            TableTestProgram.of(
+                            "upsert-with-non-key-filter", "validates upsert with non key filter")
+                    .setupConfig(
+                            ExecutionConfigOptions.TABLE_EXEC_SINK_UPSERT_MATERIALIZE,
+                            ExecutionConfigOptions.UpsertMaterialize.AUTO)
+                    .setupTableSource(
+                            SourceTestStep.newBuilder("by_cid")
+                                    .addMode(
+                                            ChangelogMode.newBuilder()
+                                                    .addContainedKind(RowKind.UPDATE_AFTER)
+                                                    .addContainedKind(RowKind.DELETE)
+                                                    .build())
+                                    .addSchema(
+                                            "InstrumentId INT NOT NULL",
+                                            "CID BIGINT NOT NULL",
+                                            "other1 STRING",
+                                            "CONSTRAINT `PRIMARY` PRIMARY KEY (`InstrumentId`, `CID`) NOT ENFORCED")
+                                    .producedValues(Row.ofKind(RowKind.INSERT, 1, 1L, "a"))
+                                    .build())
+                    .setupTableSource(
+                            SourceTestStep.newBuilder("sharded")
+                                    .addMode(
+                                            ChangelogMode.newBuilder()
+                                                    .addContainedKind(RowKind.UPDATE_AFTER)
+                                                    .addContainedKind(RowKind.DELETE)
+                                                    .build())
+                                    .addSchema(
+                                            "InstrumentId INT NOT NULL",
+                                            "Shard INT NOT NULL",
+                                            "other2 STRING",
+                                            "CONSTRAINT `PRIMARY` PRIMARY KEY (`InstrumentId`) NOT ENFORCED")
+                                    .producedValues(Row.ofKind(RowKind.INSERT, 1, 1, "a"))
+                                    .build())
+                    .setupTableSink(
+                            SinkTestStep.newBuilder("aggregation")
+                                    .addMode(ChangelogMode.upsert())
+                                    .addSchema(
+                                            "`InstrumentId` INT NOT NULL",
+                                            "`CID` BIGINT NOT NULL",
+                                            "other3 STRING",
+                                            "CONSTRAINT `PRIMARY` PRIMARY KEY (`InstrumentId`, `CID`) NOT ENFORCED")
+                                    .consumedValues(
+                                            "+I[one, 1, a]",
+                                            "-U[one, 1, a]",
+                                            "+U[one, 2, bb]",
+                                            "-D[one, 2, bb]",
+                                            "+I[two, 0, dd]",
+                                            "-U[two, 0, dd]",
+                                            "+U[two, 1, dd]")
+                                    .build())
+                    .runSql(
+                            "INSERT INTO `aggregation`\n"
+                                    + "SELECT\n"
+                                    + "    l.InstrumentId,\n"
+                                    + "    l.CID,"
+                                    + "    r.other2\n"
+                                    + "FROM `by_cid` AS l\n"
+                                    + "JOIN (\n"
+                                    + "  SELECT * FROM `sharded`\n"
+                                    + ") r\n"
+                                    + "  ON  l.InstrumentId = r.InstrumentId\n")
                     .build();
 }

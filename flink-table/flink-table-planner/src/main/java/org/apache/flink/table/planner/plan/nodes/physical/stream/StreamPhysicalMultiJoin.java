@@ -237,6 +237,10 @@ public class StreamPhysicalMultiJoin extends AbstractRelNode implements StreamPh
         return inputUniqueKeys;
     }
 
+    public int[] getCommonJoinKeyIndices(int inputId) {
+        return keyExtractor.getCommonJoinKeyIndices(inputId);
+    }
+
     private @Nullable Set<ImmutableBitSet> getUniqueKeys(RelNode input) {
         final FlinkRelMetadataQuery fmq =
                 FlinkRelMetadataQuery.reuseOrCreate(input.getCluster().getMetadataQuery());
@@ -268,6 +272,10 @@ public class StreamPhysicalMultiJoin extends AbstractRelNode implements StreamPh
 
     public List<JoinRelType> getJoinTypes() {
         return joinTypes;
+    }
+
+    public List<? extends @Nullable RexNode> getJoinConditions() {
+        return joinConditions;
     }
 
     /**
