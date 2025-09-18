@@ -18,8 +18,13 @@
 
 package org.apache.flink.table.planner.plan.nodes.exec.stream;
 
+import static org.apache.flink.table.planner.plan.nodes.exec.stream.MultiJoinTestUtils.ORDERS_SOURCE;
+import static org.apache.flink.table.planner.plan.nodes.exec.stream.MultiJoinTestUtils.PAYMENTS_SOURCE;
+import static org.apache.flink.table.planner.plan.nodes.exec.stream.MultiJoinTestUtils.USERS_SOURCE;
+
 import org.apache.flink.table.api.config.ExecutionConfigOptions;
 import org.apache.flink.table.api.config.OptimizerConfigOptions;
+import org.apache.flink.table.api.config.TableConfigOptions;
 import org.apache.flink.table.connector.ChangelogMode;
 import org.apache.flink.table.test.program.SinkTestStep;
 import org.apache.flink.table.test.program.SourceTestStep;
@@ -28,10 +33,6 @@ import org.apache.flink.types.Row;
 import org.apache.flink.types.RowKind;
 
 import java.time.LocalDateTime;
-
-import static org.apache.flink.table.planner.plan.nodes.exec.stream.MultiJoinTestUtils.ORDERS_SOURCE;
-import static org.apache.flink.table.planner.plan.nodes.exec.stream.MultiJoinTestUtils.PAYMENTS_SOURCE;
-import static org.apache.flink.table.planner.plan.nodes.exec.stream.MultiJoinTestUtils.USERS_SOURCE;
 
 /** {@link TableTestProgram} definitions for testing Multi-Join. */
 public class MultiJoinTestPrograms {
@@ -1147,67 +1148,328 @@ public class MultiJoinTestPrograms {
                                     + "INNER JOIN OrdersNullSafe o ON u.user_id IS NOT DISTINCT FROM o.user_id")
                     .build();
 
-    static final TableTestProgram TEST =
+    static final TableTestProgram MULTI_JOIN_TWO_WAY_JOIN_PRESERVES_UPSERT_KEY =
             TableTestProgram.of(
-                            "upsert-with-non-key-filter", "validates upsert with non key filter")
+                            "two-way-upsert-preserves-key", "validates upsert with non key filter")
                     .setupConfig(
                             ExecutionConfigOptions.TABLE_EXEC_SINK_UPSERT_MATERIALIZE,
                             ExecutionConfigOptions.UpsertMaterialize.AUTO)
+                    .setupConfig(OptimizerConfigOptions.TABLE_OPTIMIZER_MULTI_JOIN_ENABLED, true)
                     .setupTableSource(
                             SourceTestStep.newBuilder("by_cid")
-                                    .addMode(
-                                            ChangelogMode.newBuilder()
-                                                    .addContainedKind(RowKind.UPDATE_AFTER)
-                                                    .addContainedKind(RowKind.DELETE)
-                                                    .build())
+                                    .addOption("changelog-mode", "I, UA,D")
                                     .addSchema(
                                             "InstrumentId INT NOT NULL",
                                             "CID BIGINT NOT NULL",
                                             "other1 STRING",
                                             "CONSTRAINT `PRIMARY` PRIMARY KEY (`InstrumentId`, `CID`) NOT ENFORCED")
-                                    .producedValues(Row.ofKind(RowKind.INSERT, 1, 1L, "a"))
+                                    .producedValues(
+                                            Row.ofKind(RowKind.INSERT, 1, 1L, "a"),
+                                            Row.ofKind(RowKind.INSERT, 1, 2L, "b"),
+                                            Row.ofKind(RowKind.INSERT, 2, 1L, "c"),
+                                            Row.ofKind(RowKind.UPDATE_AFTER, 1, 1L, "a_updated"),
+                                            Row.ofKind(RowKind.DELETE, 1, 2L, "b"))
                                     .build())
                     .setupTableSource(
                             SourceTestStep.newBuilder("sharded")
-                                    .addMode(
-                                            ChangelogMode.newBuilder()
-                                                    .addContainedKind(RowKind.UPDATE_AFTER)
-                                                    .addContainedKind(RowKind.DELETE)
-                                                    .build())
+                                    .addOption("changelog-mode", "I, UA,D")
                                     .addSchema(
                                             "InstrumentId INT NOT NULL",
                                             "Shard INT NOT NULL",
                                             "other2 STRING",
                                             "CONSTRAINT `PRIMARY` PRIMARY KEY (`InstrumentId`) NOT ENFORCED")
-                                    .producedValues(Row.ofKind(RowKind.INSERT, 1, 1, "a"))
+                                    .producedValues(
+                                            Row.ofKind(RowKind.INSERT, 1, 1, "shard_a"),
+                                            Row.ofKind(RowKind.INSERT, 2, 2, "shard_b"),
+                                            Row.ofKind(
+                                                    RowKind.UPDATE_AFTER, 1, 1, "shard_a_updated"),
+                                            Row.ofKind(RowKind.DELETE, 2, 2, "shard_b"))
                                     .build())
                     .setupTableSink(
                             SinkTestStep.newBuilder("aggregation")
-                                    .addMode(ChangelogMode.upsert())
+                                    .addOption("changelog-mode", "I, UA, D")
                                     .addSchema(
                                             "`InstrumentId` INT NOT NULL",
                                             "`CID` BIGINT NOT NULL",
                                             "other3 STRING",
                                             "CONSTRAINT `PRIMARY` PRIMARY KEY (`InstrumentId`, `CID`) NOT ENFORCED")
                                     .consumedValues(
-                                            "+I[one, 1, a]",
-                                            "-U[one, 1, a]",
-                                            "+U[one, 2, bb]",
-                                            "-D[one, 2, bb]",
-                                            "+I[two, 0, dd]",
-                                            "-U[two, 0, dd]",
-                                            "+U[two, 1, dd]")
+                                            "+I[1, 1, shard_a]",
+                                            "+I[1, 2, shard_a]",
+                                            "+I[2, 1, shard_b]",
+                                            "+U[1, 2, shard_a_updated]",
+                                            "+U[1, 1, shard_a_updated]",
+                                            "-D[2, 1, shard_b]",
+                                            "+U[1, 1, shard_a_updated]",
+                                            "-D[1, 2, shard_a_updated]")
                                     .build())
                     .runSql(
                             "INSERT INTO `aggregation`\n"
                                     + "SELECT\n"
                                     + "    l.InstrumentId,\n"
-                                    + "    l.CID,"
+                                    + "    l.CID,\n"
                                     + "    r.other2\n"
                                     + "FROM `by_cid` AS l\n"
-                                    + "JOIN (\n"
-                                    + "  SELECT * FROM `sharded`\n"
-                                    + ") r\n"
+                                    + "JOIN sharded r\n"
                                     + "  ON  l.InstrumentId = r.InstrumentId\n")
+                    .build();
+
+    static final TableTestProgram MULTI_JOIN_THREE_WAY_JOIN_PRESERVES_UPSERT_KEY =
+            TableTestProgram.of(
+                            "three-way-upsert-preserves-key", "validates upsert with non key filter")
+                    .setupConfig(
+                            ExecutionConfigOptions.TABLE_EXEC_SINK_UPSERT_MATERIALIZE,
+                            ExecutionConfigOptions.UpsertMaterialize.AUTO)
+                    .setupConfig(OptimizerConfigOptions.TABLE_OPTIMIZER_MULTI_JOIN_ENABLED, true)
+                    .setupConfig(TableConfigOptions.PLAN_FORCE_RECOMPILE, true)
+                    .setupTableSource(
+                            SourceTestStep.newBuilder("by_cid")
+                                    .addOption("changelog-mode", "I, UA,D")
+                                    .addSchema(
+                                            "InstrumentId INT NOT NULL",
+                                            "CID BIGINT NOT NULL",
+                                            "other1 STRING",
+                                            "CONSTRAINT `PRIMARY` PRIMARY KEY (`InstrumentId`, `CID`) NOT ENFORCED")
+                                    .producedValues(
+                                            Row.ofKind(RowKind.INSERT, 1, 1L, "a"),
+                                            Row.ofKind(RowKind.INSERT, 1, 2L, "b"),
+                                            Row.ofKind(RowKind.INSERT, 2, 1L, "c"),
+                                            Row.ofKind(RowKind.UPDATE_AFTER, 1, 1L, "a_updated"),
+                                            Row.ofKind(RowKind.DELETE, 1, 2L, "b"))
+                                    .build())
+                    .setupTableSource(
+                            SourceTestStep.newBuilder("sensor")
+                                    .addOption("changelog-mode", "I, UA,D")
+                                    .addSchema(
+                                            "InstrumentId INT NOT NULL",
+                                            "sensorId BIGINT NOT NULL",
+                                            "other1 STRING",
+                                            "CONSTRAINT `PRIMARY` PRIMARY KEY (`InstrumentId`, `sensorId`) NOT ENFORCED")
+                                    .producedValues(
+                                            Row.ofKind(RowKind.INSERT, 1, 1L, "a"),
+                                            Row.ofKind(RowKind.INSERT, 1, 2L, "b"),
+                                            Row.ofKind(RowKind.INSERT, 2, 1L, "c"),
+                                            Row.ofKind(RowKind.UPDATE_AFTER, 1, 1L, "a_updated"),
+                                            Row.ofKind(RowKind.DELETE, 1, 2L, "b"))
+                                    .build())
+                    .setupTableSource(
+                            SourceTestStep.newBuilder("sharded")
+                                    .addOption("changelog-mode", "I, UA,D")
+                                    .addSchema(
+                                            "InstrumentId INT NOT NULL",
+                                            "Shard INT NOT NULL",
+                                            "other2 STRING",
+                                            "CONSTRAINT `PRIMARY` PRIMARY KEY (`InstrumentId`) NOT ENFORCED")
+                                    .producedValues(
+                                            Row.ofKind(RowKind.INSERT, 1, 1, "shard_a"),
+                                            Row.ofKind(RowKind.INSERT, 2, 2, "shard_b"),
+                                            Row.ofKind(
+                                                    RowKind.UPDATE_AFTER, 1, 1, "shard_a_updated"),
+                                            Row.ofKind(RowKind.DELETE, 2, 2, "shard_b"))
+                                    .build())
+                    .setupTableSink(
+                            SinkTestStep.newBuilder("aggregation")
+                                    .addOption("changelog-mode", "I, UA, D")
+                                    .addSchema(
+                                            "`InstrumentId` INT NOT NULL",
+                                            "`CID` BIGINT NOT NULL",
+                                            "`InstrumentId2` INT NOT NULL",
+                                            "sensorId BIGINT NOT NULL",
+                                            "other3 STRING",
+                                            "CONSTRAINT `PRIMARY` PRIMARY KEY (`InstrumentId`, `CID`, `InstrumentId2`, `sensorId`) NOT ENFORCED")
+                                    .consumedValues(
+                                            "+I[1, 1, 1, 1, shard_a]",
+                                            "+I[1, 2, 1, 1, shard_a]",
+                                            "+U[1, 2, 1, 1, shard_a_updated]",
+                                            "+U[1, 1, 1, 1, shard_a_updated]",
+                                            "+I[2, 1, 2, 1, shard_b]",
+                                            "-D[2, 1, 2, 1, shard_b]",
+                                            "+U[1, 1, 1, 1, shard_a_updated]",
+                                            "-D[1, 2, 1, 1, shard_a_updated]"
+                                    )
+                                    //.testMaterializedData()
+                                    .build())
+                    .runSql(
+                            "INSERT INTO `aggregation`\n"
+                                    + "SELECT\n"
+                                    + "    l.InstrumentId,\n"
+                                    + "    l.CID,\n"
+                                    + "    s.InstrumentId,\n"
+                                    + "    s.sensorId,\n"
+                                    + "    r.other2\n"
+                                    + "FROM `by_cid` AS l\n"
+                                    + "JOIN sharded r\n"
+                                    + "  ON  l.InstrumentId = r.InstrumentId\n"
+                                    + "JOIN sensor s\n"
+                                    + "  ON  l.InstrumentId = s.InstrumentId"
+                    )
+                    .build();
+
+    public static final TableTestProgram MULTI_JOIN_THREE_WAY_JOIN_PRESERVES_UPSERT_KEY2 =
+            TableTestProgram.of(
+                            "three-way-upsert-preserves-key",
+                            "validates upsert key preservation in three-way join with multiple conditions")
+                    .setupConfig(
+                            ExecutionConfigOptions.TABLE_EXEC_SINK_UPSERT_MATERIALIZE,
+                            ExecutionConfigOptions.UpsertMaterialize.AUTO)
+                    .setupConfig(OptimizerConfigOptions.TABLE_OPTIMIZER_MULTI_JOIN_ENABLED, false)
+                    .setupConfig(TableConfigOptions.PLAN_FORCE_RECOMPILE, true)
+                    .setupTableSource(
+                            SourceTestStep.newBuilder("Users")
+                                    .addMode(
+                                            ChangelogMode.newBuilder()
+                                                    .addContainedKind(RowKind.INSERT)
+                                                    .addContainedKind(RowKind.UPDATE_AFTER)
+                                                    .addContainedKind(RowKind.DELETE)
+                                                    .build())
+                                    .addSchema(
+                                            "user_id STRING PRIMARY KEY NOT ENFORCED",
+                                            "name STRING",
+                                            "region STRING",
+                                            "status STRING")
+                                    .producedValues(
+                                            Row.ofKind(
+                                                    RowKind.INSERT,
+                                                    "1",
+                                                    "Alice",
+                                                    "North",
+                                                    "active"),
+                                            Row.ofKind(
+                                                    RowKind.INSERT, "2", "Bob", "South", "active"),
+                                            Row.ofKind(
+                                                    RowKind.INSERT,
+                                                    "3",
+                                                    "Charlie",
+                                                    "East",
+                                                    "active"),
+                                            Row.ofKind(
+                                                    RowKind.UPDATE_AFTER,
+                                                    "1",
+                                                    "Alice Updated",
+                                                    "North",
+                                                    "premium"),
+                                            Row.ofKind(
+                                                    RowKind.DELETE, "2", "Bob", "South", "active"))
+                                    .build())
+                    .setupTableSource(
+                            SourceTestStep.newBuilder("Orders")
+                                    .addMode(
+                                            ChangelogMode.newBuilder()
+                                                    .addContainedKind(RowKind.INSERT)
+                                                    .addContainedKind(RowKind.UPDATE_AFTER)
+                                                    .addContainedKind(RowKind.DELETE)
+                                                    .build())
+                                    .addSchema(
+                                            "user_id STRING",
+                                            "order_id STRING PRIMARY KEY NOT ENFORCED",
+                                            "product STRING",
+                                            "region STRING")
+                                    .producedValues(
+                                            Row.ofKind(
+                                                    RowKind.INSERT,
+                                                    "1",
+                                                    "order1",
+                                                    "Laptop",
+                                                    "North"),
+                                            Row.ofKind(
+                                                    RowKind.INSERT,
+                                                    "1",
+                                                    "order2",
+                                                    "Mouse",
+                                                    "North"),
+                                            Row.ofKind(
+                                                    RowKind.INSERT,
+                                                    "2",
+                                                    "order3",
+                                                    "Keyboard",
+                                                    "South"),
+                                            Row.ofKind(
+                                                    RowKind.INSERT,
+                                                    "3",
+                                                    "order4",
+                                                    "Monitor",
+                                                    "East"),
+                                            Row.ofKind(
+                                                    RowKind.UPDATE_AFTER,
+                                                    "1",
+                                                    "order1",
+                                                    "Laptop Pro",
+                                                    "North"),
+                                            Row.ofKind(
+                                                    RowKind.DELETE,
+                                                    "2",
+                                                    "order3",
+                                                    "Keyboard",
+                                                    "South"))
+                                    .build())
+                    .setupTableSource(
+                            SourceTestStep.newBuilder("Payments")
+                                    .addMode(
+                                            ChangelogMode.newBuilder()
+                                                    .addContainedKind(RowKind.INSERT)
+                                                    .addContainedKind(RowKind.UPDATE_AFTER)
+                                                    .addContainedKind(RowKind.DELETE)
+                                                    .build())
+                                    .addSchema(
+                                            "user_id STRING",
+                                            "payment_id STRING PRIMARY KEY NOT ENFORCED",
+                                            "amount INT",
+                                            "product_type STRING")
+                                    .producedValues(
+                                            Row.ofKind(
+                                                    RowKind.INSERT, "1", "payment1", 999, "Laptop"),
+                                            Row.ofKind(
+                                                    RowKind.INSERT, "1", "payment2", 25, "Mouse"),
+                                            Row.ofKind(
+                                                    RowKind.INSERT,
+                                                    "2",
+                                                    "payment3",
+                                                    75,
+                                                    "Keyboard"),
+                                            Row.ofKind(
+                                                    RowKind.INSERT,
+                                                    "3",
+                                                    "payment4",
+                                                    299,
+                                                    "Monitor"),
+                                            Row.ofKind(
+                                                    RowKind.UPDATE_AFTER,
+                                                    "1",
+                                                    "payment1",
+                                                    1099,
+                                                    "Laptop Pro"),
+                                            Row.ofKind(
+                                                    RowKind.DELETE,
+                                                    "2",
+                                                    "payment3",
+                                                    75,
+                                                    "Keyboard"))
+                                    .build())
+                    .setupTableSink(
+                            SinkTestStep.newBuilder("sink")
+                                    .addMode(ChangelogMode.upsert())
+                                    .addSchema(
+                                            "`user_id` STRING NOT NULL",
+                                            "`order_id` STRING NOT NULL",
+                                            "`payment_id` STRING NOT NULL",
+                                            "`name` STRING",
+                                            "`product` STRING",
+                                            "`amount` INT",
+                                            "`status` STRING",
+                                            "CONSTRAINT `PRIMARY` PRIMARY KEY (`user_id`, `order_id`, `payment_id`) NOT ENFORCED")
+                                    .consumedValues(
+                                            "+I[1, order1, payment1, Alice, Laptop, 999, active]",
+                                            "+I[1, order2, payment2, Alice, Mouse, 25, active]",
+                                            "+I[3, order4, payment4, Charlie, Monitor, 299, active]",
+                                            "+U[1, order1, payment1, Alice Updated, Laptop Pro, 1099, premium]",
+                                            "-D[1, order2, payment2, Alice, Mouse, 25, active]",
+                                            "-D[3, order4, payment4, Charlie, Monitor, 299, active]")
+                                    .build())
+                    .runSql(
+                            "INSERT INTO sink "
+                                    + "SELECT u.user_id, o.order_id, p.payment_id, u.name, o.product, p.amount, u.status "
+                                    + "FROM Users u "
+                                    + "INNER JOIN Orders o ON u.user_id = o.user_id AND u.region = o.region "
+                                    + "INNER JOIN Payments p ON u.user_id = p.user_id AND o.product = p.product_type")
                     .build();
 }

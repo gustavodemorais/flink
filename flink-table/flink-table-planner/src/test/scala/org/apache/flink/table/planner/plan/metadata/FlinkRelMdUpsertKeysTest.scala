@@ -17,6 +17,7 @@
  */
 package org.apache.flink.table.planner.plan.metadata
 
+import org.apache.flink.table.planner.calcite.FlinkTypeFactory
 import org.apache.flink.table.planner.plan.nodes.calcite.LogicalExpand
 import org.apache.flink.table.planner.plan.nodes.physical.stream.StreamPhysicalTableSourceScan
 import org.apache.flink.table.planner.plan.schema.TableSourceTable
@@ -25,8 +26,9 @@ import org.apache.flink.table.planner.plan.utils.ExpandUtil
 import com.google.common.collect.{ImmutableList, ImmutableSet}
 import org.apache.calcite.prepare.CalciteCatalogReader
 import org.apache.calcite.rel.RelNode
+import org.apache.calcite.rel.core.JoinRelType
 import org.apache.calcite.rel.hint.RelHint
-import org.apache.calcite.sql.fun.SqlStdOperatorTable.{EQUALS, LESS_THAN}
+import org.apache.calcite.sql.fun.SqlStdOperatorTable.{EQUALS, IS_TRUE, LESS_THAN}
 import org.apache.calcite.util.ImmutableBitSet
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test
@@ -407,25 +409,86 @@ class FlinkRelMdUpsertKeysTest extends FlinkRelMdHandlerTestBase {
   }
 
   @Test
-  def testGetUpsertKeysOnMultiJoinWithLessThanTwoInputs(): Unit = {
-    // Test with single input - should return null
-    val singleInput = java.util.Collections.singletonList(studentLogicalScan)
-    val singleInputMultiJoin = createMockMultiJoin(singleInput, java.util.Collections.emptyList())
-    assertNull(mq.getUpsertKeys(singleInputMultiJoin))
+  def testGetUpsertKeysOnMultiJoin(): Unit = {
+    // Test simple case: two inputs with unique keys
+    // MyTable1 has unique key on field 0 (a), MyTable4 has unique key on field 0 (a)
+    // Join condition: MyTable1.b = MyTable4.a
+    val inputs = java.util.Arrays.asList[RelNode](studentLogicalScan, studentLogicalScan)
+    val joinTypes = java.util.Arrays.asList(JoinRelType.INNER, JoinRelType.INNER)
+    relBuilder.push(studentLogicalScan)
+    relBuilder.push(studentLogicalScan)
+    val joinConditions = java.util.Arrays.asList(
+      relBuilder.call(IS_TRUE, relBuilder.literal(true)),
+      relBuilder.call(EQUALS, relBuilder.field(2, 0, 1), relBuilder.field(2, 1, 0))
+    )
+    val multiJoinOnUniqueKeys = createMultiJoin(inputs, joinTypes, joinConditions)
 
-    // Test with empty inputs - should return null
-    val emptyInputs = java.util.Collections.emptyList[RelNode]()
-    val emptyInputMultiJoin = createMockMultiJoin(emptyInputs, java.util.Collections.emptyList())
-    assertNull(mq.getUpsertKeys(emptyInputMultiJoin))
+    // Expected: combination of unique keys from both inputs
+    // Left input has unique key [0], right input has unique key [0]
+    // After join: [0] from left, [2] from right (0 + rightFieldCount), [0,2] combined
+    assertEquals(
+      toBitSet(Array(0), Array(2), Array(0, 2)),
+      mq.getUpsertKeys(multiJoinOnUniqueKeys).toSet)
+
+    // Test case with no unique keys - should return empty set
+    val inputsNoKeys = java.util.Arrays.asList[RelNode](empLogicalScan, empLogicalScan)
+    val multiJoinNoKeys = createMultiJoin(inputsNoKeys, joinTypes, joinConditions)
+    assertEquals(toBitSet(), mq.getUpsertKeys(multiJoinNoKeys).toSet)
   }
 
-  private def createMockMultiJoin(
+  private def createMultiJoin(
       inputs: java.util.List[RelNode],
-      joinTypes: java.util.List[org.apache.calcite.rel.core.JoinRelType])
+      joinTypes: java.util.List[org.apache.calcite.rel.core.JoinRelType],
+      joinConditions: java.util.List[org.apache.calcite.rex.RexNode])
       : org.apache.flink.table.planner.plan.nodes.physical.stream.StreamPhysicalMultiJoin = {
-    // This is a simplified mock for testing purposes
-    // In a real test, you would need to create proper instances with all required parameters
-    null // Placeholder - actual implementation would require more complex setup
+    // Create a simple join filter from the first join condition
+    val joinFilter = if (joinConditions.isEmpty) {
+      rexBuilder.makeLiteral(true)
+    } else {
+      joinConditions.get(0)
+    }
+
+    // Calculate the output row type
+    val leftRowType = inputs.get(0).getRowType
+    val rightRowType = inputs.get(1).getRowType
+    val outputRowType = typeFactory
+      .builder()
+      .addAll(leftRowType.getFieldList)
+      .addAll(rightRowType.getFieldList)
+      .build()
+
+    // Create empty join attribute map for simplicity
+    val joinAttributeMap = new java.util.HashMap[
+      Integer,
+      java.util.List[
+        org.apache.flink.table.runtime.operators.join.stream.keyselector.AttributeBasedJoinKeyExtractor.ConditionAttributeRef]]()
+
+    // Create empty hints list
+    val hints = java.util.Collections.emptyList[org.apache.calcite.rel.hint.RelHint]()
+
+    // Create a simple key extractor using AttributeBasedJoinKeyExtractor
+    val inputTypes = java.util.Arrays.asList(
+      FlinkTypeFactory.toLogicalRowType(leftRowType),
+      FlinkTypeFactory.toLogicalRowType(rightRowType)
+    )
+    val keyExtractor =
+      new org.apache.flink.table.runtime.operators.join.stream.keyselector.AttributeBasedJoinKeyExtractor(
+        joinAttributeMap,
+        inputTypes)
+
+    new org.apache.flink.table.planner.plan.nodes.physical.stream.StreamPhysicalMultiJoin(
+      cluster,
+      streamPhysicalTraits,
+      inputs,
+      joinFilter,
+      outputRowType,
+      joinConditions,
+      joinTypes,
+      joinAttributeMap,
+      null, // postJoinFilter
+      hints,
+      keyExtractor
+    )
   }
 
   private def toBitSet(keys: Array[Int]*): Set[ImmutableBitSet] = {

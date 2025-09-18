@@ -18,6 +18,9 @@
 
 package org.apache.flink.table.planner.plan.nodes.exec.testutils;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
+import org.apache.commons.collections.CollectionUtils;
 import org.apache.flink.FlinkVersion;
 import org.apache.flink.api.common.JobStatus;
 import org.apache.flink.configuration.StateBackendOptions;
@@ -47,10 +50,7 @@ import org.apache.flink.table.test.program.TableTestProgramRunner;
 import org.apache.flink.table.test.program.TestStep.TestKind;
 import org.apache.flink.test.junit5.MiniClusterExtension;
 import org.apache.flink.types.Row;
-
-import org.apache.commons.collections.CollectionUtils;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.MethodOrderer.OrderAnnotation;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.TestInstance;
@@ -60,8 +60,6 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
-
-import javax.annotation.Nullable;
 
 import java.net.URI;
 import java.nio.file.Files;
@@ -78,7 +76,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Stream;
 
-import static org.assertj.core.api.Assertions.assertThat;
+import javax.annotation.Nullable;
 
 /**
  * Base class for implementing restore tests for {@link ExecNode}.
@@ -257,7 +255,7 @@ public abstract class RestoreTestBase implements TableTestProgramRunner {
      * Execute this test to generate test files. Remember to be using the correct branch when
      * generating the test files.
      */
-    @Disabled
+    //@Disabled
     @ParameterizedTest
     @MethodSource("supportedPrograms")
     @Order(0)
