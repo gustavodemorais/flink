@@ -1223,6 +1223,21 @@ public class MultiJoinTestPrograms {
                     .setupConfig(OptimizerConfigOptions.TABLE_OPTIMIZER_MULTI_JOIN_ENABLED, true)
                     .setupConfig(TableConfigOptions.PLAN_FORCE_RECOMPILE, true)
                     .setupTableSource(
+                            SourceTestStep.newBuilder("sharded")
+                                    .addOption("changelog-mode", "I, UA,D")
+                                    .addSchema(
+                                            "InstrumentId INT NOT NULL",
+                                            "Shard INT NOT NULL",
+                                            "other2 STRING",
+                                            "CONSTRAINT `PRIMARY` PRIMARY KEY (`InstrumentId`) NOT ENFORCED")
+                                    .producedValues(
+                                            Row.ofKind(RowKind.INSERT, 1, 1, "shard_a"),
+                                            Row.ofKind(RowKind.INSERT, 2, 2, "shard_b"),
+                                            Row.ofKind(
+                                                    RowKind.UPDATE_AFTER, 1, 1, "shard_a_updated"),
+                                            Row.ofKind(RowKind.DELETE, 2, 2, "shard_b"))
+                                    .build())
+                    .setupTableSource(
                             SourceTestStep.newBuilder("by_cid")
                                     .addOption("changelog-mode", "I, UA,D")
                                     .addSchema(
@@ -1252,21 +1267,6 @@ public class MultiJoinTestPrograms {
                                             Row.ofKind(RowKind.UPDATE_AFTER, 1, 1L, "a_updated"),
                                             Row.ofKind(RowKind.DELETE, 1, 2L, "b"))
                                     .build())
-                    .setupTableSource(
-                            SourceTestStep.newBuilder("sharded")
-                                    .addOption("changelog-mode", "I, UA,D")
-                                    .addSchema(
-                                            "InstrumentId INT NOT NULL",
-                                            "Shard INT NOT NULL",
-                                            "other2 STRING",
-                                            "CONSTRAINT `PRIMARY` PRIMARY KEY (`InstrumentId`) NOT ENFORCED")
-                                    .producedValues(
-                                            Row.ofKind(RowKind.INSERT, 1, 1, "shard_a"),
-                                            Row.ofKind(RowKind.INSERT, 2, 2, "shard_b"),
-                                            Row.ofKind(
-                                                    RowKind.UPDATE_AFTER, 1, 1, "shard_a_updated"),
-                                            Row.ofKind(RowKind.DELETE, 2, 2, "shard_b"))
-                                    .build())
                     .setupTableSink(
                             SinkTestStep.newBuilder("aggregation")
                                     .addOption("changelog-mode", "I, UA, D")
@@ -1275,8 +1275,9 @@ public class MultiJoinTestPrograms {
                                             "`CID` BIGINT NOT NULL",
                                             "`InstrumentId2` INT NOT NULL",
                                             "sensorId BIGINT NOT NULL",
+                                            "`InstrumentId3` INT NOT NULL",
                                             "other3 STRING",
-                                            "CONSTRAINT `PRIMARY` PRIMARY KEY (`InstrumentId`, `CID`, `InstrumentId2`, `sensorId`) NOT ENFORCED")
+                                            "CONSTRAINT `PRIMARY` PRIMARY KEY (`InstrumentId`, `CID`, `InstrumentId2`, `sensorId`, `InstrumentId3`) NOT ENFORCED")
                                     .consumedValues(
                                             "+I[1, 1, 1, 1, shard_a]",
                                             "+I[1, 2, 1, 1, shard_a]",
@@ -1296,9 +1297,10 @@ public class MultiJoinTestPrograms {
                                     + "    l.CID,\n"
                                     + "    s.InstrumentId,\n"
                                     + "    s.sensorId,\n"
+                                    + "    r.InstrumentId,\n"
                                     + "    r.other2\n"
-                                    + "FROM `by_cid` AS l\n"
-                                    + "JOIN sharded r\n"
+                                    + "FROM sharded r\n"
+                                    + "JOIN `by_cid` AS l\n"
                                     + "  ON  l.InstrumentId = r.InstrumentId\n"
                                     + "JOIN sensor s\n"
                                     + "  ON  l.InstrumentId = s.InstrumentId"

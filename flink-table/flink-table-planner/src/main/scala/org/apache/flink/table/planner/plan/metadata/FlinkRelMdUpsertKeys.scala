@@ -17,6 +17,14 @@
  */
 package org.apache.flink.table.planner.plan.metadata
 
+import com.google.common.collect.ImmutableSet
+import org.apache.calcite.plan.hep.HepRelVertex
+import org.apache.calcite.plan.volcano.RelSubset
+import org.apache.calcite.rel.core._
+import org.apache.calcite.rel.metadata._
+import org.apache.calcite.rel.{RelDistribution, RelNode, SingleRel}
+import org.apache.calcite.rex.{RexNode, RexUtil}
+import org.apache.calcite.util.{Bug, ImmutableBitSet, Util}
 import org.apache.flink.table.planner._
 import org.apache.flink.table.planner.plan.metadata.FlinkMetadata.UpsertKeys
 import org.apache.flink.table.planner.plan.nodes.calcite.{Expand, Rank, WatermarkAssigner, WindowAggregate}
@@ -26,17 +34,7 @@ import org.apache.flink.table.planner.plan.nodes.physical.stream._
 import org.apache.flink.table.planner.plan.schema.IntermediateRelTable
 import org.apache.flink.table.planner.plan.utils.{FlinkRexUtil, RankUtil}
 
-import com.google.common.collect.ImmutableSet
-import org.apache.calcite.plan.hep.HepRelVertex
-import org.apache.calcite.plan.volcano.RelSubset
-import org.apache.calcite.rel.{RelDistribution, RelNode, SingleRel}
-import org.apache.calcite.rel.core._
-import org.apache.calcite.rel.metadata._
-import org.apache.calcite.rex.{RexNode, RexUtil}
-import org.apache.calcite.util.{Bug, ImmutableBitSet, Util}
-
 import java.util
-
 import scala.collection.JavaConversions._
 
 /**
@@ -279,13 +277,16 @@ class FlinkRelMdUpsertKeys private extends MetadataHandler[UpsertKeys] {
     val inputs = multiJoin.getInputs
     val joinTypes = multiJoin.getJoinTypes
 
-    if (inputs.size < 2) {
-      return null
-    }
-
     // Start with the first input as the left side
     var leftFieldCount = inputs.get(0).getRowType.getFieldCount
-    var leftUpsert = fmq.getUpsertKeys(inputs.get(0))
+    var upsertKeys = fmq.getUpsertKeys(inputs.get(0))
+
+    // We have the same distribution keys for all inputs, the common join key.
+    // However, for each input it has a different index local to that input and that's why
+    // If we want to calculate all possible upsert keys,
+    // we need to do it for each of the distribution keys.
+    val allDistributionKeysLeft = new java.util.HashSet[ImmutableBitSet]()
+    allDistributionKeysLeft.add(ImmutableBitSet.of(multiJoin.getCommonJoinKeyIndices(0): _*))
 
     // Iteratively join each subsequent input
     for (i <- 1 until inputs.size) {
@@ -293,29 +294,40 @@ class FlinkRelMdUpsertKeys private extends MetadataHandler[UpsertKeys] {
       val rightUpsert = fmq.getUpsertKeys(rightInput)
       val joinRelType = joinTypes.get(i)
 
-      // Get distribution keys for both sides
-      val distributionKeysLeft = multiJoin.getCommonJoinKeyIndices(0)
       val distributionKeysRight = multiJoin.getCommonJoinKeyIndices(i)
-
-      val distributionLeft = ImmutableBitSet.of(distributionKeysLeft: _*)
       val distributionRight = ImmutableBitSet.of(distributionKeysRight: _*)
 
       // Calculate upsert keys for this join operation
-      leftUpsert = FlinkRelMdUniqueKeys.INSTANCE.getJoinUniqueKeys(
-        joinRelType,
-        leftFieldCount,
-        filterKeys(leftUpsert, distributionLeft),
-        filterKeys(rightUpsert, distributionRight),
-        areColumnsUpsertKeys(leftUpsert, distributionLeft),
-        areColumnsUpsertKeys(rightUpsert, distributionRight)
-      )
+      val newCombinedUpsertKeys = new java.util.HashSet[ImmutableBitSet]()
+      for (distributionLeft <- allDistributionKeysLeft) {
+         val newUpsertKeys = FlinkRelMdUniqueKeys.INSTANCE.getJoinUniqueKeys(
+          joinRelType,
+          leftFieldCount,
+          filterKeys(upsertKeys, distributionLeft),
+          filterKeys(rightUpsert, distributionRight),
+          areColumnsUpsertKeys(upsertKeys, distributionLeft),
+          areColumnsUpsertKeys(rightUpsert, distributionRight)
+        )
 
-      // Update field count for the next iteration
-      // The result of this join will have leftFieldCount + rightInput.getRowType.getFieldCount fields
+        if (newUpsertKeys != null) {
+          newCombinedUpsertKeys.addAll(newUpsertKeys)
+        }
+      }
+
+      upsertKeys = newCombinedUpsertKeys
+
+      // Update fields for the next iteration
+      // Add distribution keys of the right side, adjusting their indices
+      val tmpMask = ImmutableBitSet.builder
+      distributionRight.foreach(bit => tmpMask.set(bit + leftFieldCount))
+      val adjustedDistributionRight = tmpMask.build()
+      allDistributionKeysLeft.add(adjustedDistributionRight)
+
       leftFieldCount += rightInput.getRowType.getFieldCount
+
     }
 
-    leftUpsert
+    upsertKeys
   }
 
   private def getJoinUpsertKeys(
