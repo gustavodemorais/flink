@@ -226,6 +226,12 @@
       "type" : "BOOLEAN NOT NULL"
     },
     "joinAttributeMap" : {
+      "0" : [ {
+        "leftInputId" : -1,
+        "leftFieldIndex" : -1,
+        "rightInputId" : 0,
+        "rightFieldIndex" : 0
+      } ],
       "1" : [ {
         "leftInputId" : 0,
         "leftFieldIndex" : 0,
@@ -276,7 +282,7 @@
       "priority" : 2
     } ],
     "outputType" : "ROW<`InstrumentId` INT NOT NULL, `other2` VARCHAR(2147483647), `InstrumentId0` INT NOT NULL, `CID` BIGINT NOT NULL, `InstrumentId1` INT NOT NULL, `sensorId` BIGINT NOT NULL>",
-    "description" : "MultiJoin(joinFilter=[AND(=($2, $4), =($2, $0))], joinTypes=[[INNER, INNER, INNER]], joinConditions=[[true, =($2, $0), =($2, $4)]], joinAttributeMap=[{1=[LeftInputId:0;LeftFieldIndex:0;RightInputId:1;RightFieldIndex:0;], 2=[LeftInputId:1;LeftFieldIndex:0;RightInputId:2;RightFieldIndex:0;]}], select=[InstrumentId,other2,InstrumentId0,CID,InstrumentId1,sensorId], rowType=[RecordType(INTEGER InstrumentId, VARCHAR(2147483647) other2, INTEGER InstrumentId0, BIGINT CID, INTEGER InstrumentId1, BIGINT sensorId)])"
+    "description" : "MultiJoin(joinFilter=[AND(=($2, $4), =($2, $0))], joinTypes=[[INNER, INNER, INNER]], joinConditions=[[true, =($2, $0), =($2, $4)]], joinAttributeMap=[{0=[LeftInputId:-1;LeftFieldIndex:-1;RightInputId:0;RightFieldIndex:0;], 1=[LeftInputId:0;LeftFieldIndex:0;RightInputId:1;RightFieldIndex:0;], 2=[LeftInputId:1;LeftFieldIndex:0;RightInputId:2;RightFieldIndex:0;]}], select=[InstrumentId,other2,InstrumentId0,CID,InstrumentId1,sensorId], rowType=[RecordType(INTEGER InstrumentId, VARCHAR(2147483647) other2, INTEGER InstrumentId0, BIGINT CID, INTEGER InstrumentId1, BIGINT sensorId)])"
   }, {
     "id" : 8,
     "type" : "stream-exec-calc_1",

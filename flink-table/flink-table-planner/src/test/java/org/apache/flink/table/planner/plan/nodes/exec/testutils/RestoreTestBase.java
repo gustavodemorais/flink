@@ -74,6 +74,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Stream;
 
 import javax.annotation.Nullable;
@@ -227,11 +230,38 @@ public abstract class RestoreTestBase implements TableTestProgramRunner {
         return builder.toString();
     }
 
+    /**
+     * Fails the given CompletableFuture with a TimeoutException if it does not complete
+     * within the specified timeout.
+     *
+     * @param future The CompletableFuture to apply the timeout to.
+     * @param timeout The maximum time to wait.
+     * @param unit The time unit of the timeout argument.
+     * @param message The message for the TimeoutException.
+     * @param <T> The type of the CompletableFuture's result.
+     */
+    public static <T> void failAfter(CompletableFuture<T> future, long timeout, TimeUnit unit, String message) {
+        if (!future.isDone()) {
+            Executor delayer = CompletableFuture.delayedExecutor(timeout, unit);
+            delayer.execute(() -> {
+                if (!future.isDone()) {
+                    future.completeExceptionally(new TimeoutException(message));
+                }
+            });
+        }
+    }
+
     private void registerSinkObserver(
             final List<CompletableFuture<?>> futures,
             final SinkTestStep sinkTestStep,
             final boolean ignoreAfter) {
         final CompletableFuture<Object> future = new CompletableFuture<>();
+        // If we don't get the expected results, we don't want to wait forever
+        // We can add a timeout property to the program so that it can be configured, if necessary
+        future.completeOnTimeout(
+                null,
+                10,
+                TimeUnit.SECONDS);
         futures.add(future);
         final String tableName = sinkTestStep.name;
         TestValuesTableFactory.registerLocalRawResultsObserver(
@@ -255,7 +285,7 @@ public abstract class RestoreTestBase implements TableTestProgramRunner {
      * Execute this test to generate test files. Remember to be using the correct branch when
      * generating the test files.
      */
-    //@Disabled
+    // @Disabled
     @ParameterizedTest
     @MethodSource("supportedPrograms")
     @Order(0)
@@ -401,6 +431,7 @@ public abstract class RestoreTestBase implements TableTestProgramRunner {
             for (SinkTestStep sinkTestStep : program.getSetupSinkTestSteps()) {
                 List<String> expectedResults = getExpectedResults(sinkTestStep, sinkTestStep.name);
                 assertThat(expectedResults)
+                        .as("%s", program.id)
                         .containsExactlyInAnyOrder(
                                 Stream.concat(
                                                 sinkTestStep

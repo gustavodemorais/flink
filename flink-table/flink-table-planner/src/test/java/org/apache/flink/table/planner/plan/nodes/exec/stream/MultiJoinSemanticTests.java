@@ -39,10 +39,8 @@ public class MultiJoinSemanticTests extends SemanticTestBase {
     @Override
     public List<TableTestProgram> programs() {
         return List.of(
-                MultiJoinTestPrograms.MULTI_JOIN_TWO_WAY_JOIN_PRESERVES_UPSERT_KEY_WITH_RESTORE
-                //MultiJoinTestPrograms.MULTI_JOIN_THREE_WAY_JOIN_PRESERVES_UPSERT_KEY_WITH_RESTORE,
                 //MultiJoinTestPrograms.MULTI_JOIN_WITH_CROSS_JOIN_UNNEST
-                /*MultiJoinTestPrograms.MULTI_JOIN_THREE_WAY_INNER_JOIN,
+                MultiJoinTestPrograms.MULTI_JOIN_THREE_WAY_INNER_JOIN,
                 MultiJoinTestPrograms.MULTI_JOIN_THREE_WAY_LEFT_OUTER_JOIN,
                 MultiJoinTestPrograms.MULTI_JOIN_THREE_WAY_LEFT_OUTER_JOIN_UPDATING,
                 MultiJoinTestPrograms.MULTI_JOIN_THREE_WAY_LEFT_OUTER_JOIN_WITH_WHERE,
@@ -53,6 +51,6 @@ public class MultiJoinSemanticTests extends SemanticTestBase {
                 MultiJoinTestPrograms.MULTI_JOIN_THREE_WAY_LEFT_OUTER_JOIN_WITH_CTE,
                 MultiJoinTestPrograms.MULTI_JOIN_MIXED_CHANGELOG_MODES,
                 MultiJoinTestPrograms.MULTI_JOIN_LEFT_OUTER_WITH_NULL_KEYS,
-                MultiJoinTestPrograms.MULTI_JOIN_NULL_SAFE_JOIN_WITH_NULL_KEYS*/ );
+                MultiJoinTestPrograms.MULTI_JOIN_NULL_SAFE_JOIN_WITH_NULL_KEYS );
     }
 }

@@ -1152,7 +1152,7 @@ public class MultiJoinTestPrograms {
             TableTestProgram.of(
                             "two-way-upsert-preserves-key-with-restore",
                             "validates upsert with non key filter with restore")
-                    .setupConfig(OptimizerConfigOptions.TABLE_OPTIMIZER_MULTI_JOIN_ENABLED, false)
+                    .setupConfig(OptimizerConfigOptions.TABLE_OPTIMIZER_MULTI_JOIN_ENABLED, true)
                     .setupTableSource(
                             SourceTestStep.newBuilder("by_cid")
                                     .addOption("changelog-mode", "I, UA,D")
@@ -1202,8 +1202,7 @@ public class MultiJoinTestPrograms {
                                     + "    l.other1\n"
                                     + "FROM sharded r\n"
                                     + "JOIN `by_cid` AS l\n"
-                                    //+ "  ON  l.InstrumentId = r.InstrumentId\n"
-                                    + "  ON  TRUE\n"
+                                    + "  ON  l.InstrumentId = r.InstrumentId\n"
                     )
                     .build();
 

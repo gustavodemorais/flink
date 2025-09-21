@@ -18,16 +18,16 @@
 
 package org.apache.flink.table.runtime.operators.join.stream.utils;
 
+import static org.apache.flink.util.Preconditions.checkNotNull;
+
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
 
-import javax.annotation.Nullable;
-
 import java.io.Serializable;
 
-import static org.apache.flink.util.Preconditions.checkNotNull;
+import javax.annotation.Nullable;
 
 /**
  * The {@link JoinInputSideSpec} is ap specification which describes input side information of a
@@ -36,7 +36,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 public class JoinInputSideSpec implements Serializable {
     private static final long serialVersionUID = 3178408082297179959L;
 
-    // todo add a bit of explanation which one is used in which case
+    // TODO Gustavo add a bit of explanation which one is used in which case
     private final boolean inputSideHasUniqueKey;
     private final boolean joinKeyContainsUniqueKey;
     @Nullable private final InternalTypeInfo<RowData> uniqueKeyType;

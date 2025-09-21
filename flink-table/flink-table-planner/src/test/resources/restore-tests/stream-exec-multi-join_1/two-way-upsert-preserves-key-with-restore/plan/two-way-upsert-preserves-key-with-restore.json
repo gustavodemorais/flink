@@ -5,48 +5,6 @@
     "type" : "stream-exec-table-source-scan_1",
     "scanTableSource" : {
       "table" : {
-        "identifier" : "`default_catalog`.`default_database`.`by_cid`",
-        "resolvedTable" : {
-          "schema" : {
-            "columns" : [ {
-              "name" : "InstrumentId",
-              "dataType" : "INT NOT NULL"
-            }, {
-              "name" : "CID",
-              "dataType" : "BIGINT NOT NULL"
-            }, {
-              "name" : "other1",
-              "dataType" : "VARCHAR(2147483647)"
-            } ],
-            "primaryKey" : {
-              "name" : "PRIMARY",
-              "type" : "PRIMARY_KEY",
-              "columns" : [ "InstrumentId", "CID" ]
-            }
-          }
-        }
-      }
-    },
-    "outputType" : "ROW<`InstrumentId` INT NOT NULL, `CID` BIGINT NOT NULL, `other1` VARCHAR(2147483647)>",
-    "description" : "TableSourceScan(table=[[default_catalog, default_database, by_cid]], fields=[InstrumentId, CID, other1])"
-  }, {
-    "id" : 2,
-    "type" : "stream-exec-exchange_1",
-    "inputProperties" : [ {
-      "requiredDistribution" : {
-        "type" : "HASH",
-        "keys" : [ 0 ]
-      },
-      "damBehavior" : "PIPELINED",
-      "priority" : 0
-    } ],
-    "outputType" : "ROW<`InstrumentId` INT NOT NULL, `CID` BIGINT NOT NULL, `other1` VARCHAR(2147483647)>",
-    "description" : "Exchange(distribution=[hash[InstrumentId]])"
-  }, {
-    "id" : 3,
-    "type" : "stream-exec-table-source-scan_1",
-    "scanTableSource" : {
-      "table" : {
         "identifier" : "`default_catalog`.`default_database`.`sharded`",
         "resolvedTable" : {
           "schema" : {
@@ -81,6 +39,42 @@
     "outputType" : "ROW<`InstrumentId` INT NOT NULL>",
     "description" : "TableSourceScan(table=[[default_catalog, default_database, sharded, project=[InstrumentId], metadata=[]]], fields=[InstrumentId])"
   }, {
+    "id" : 2,
+    "type" : "stream-exec-exchange_1",
+    "inputProperties" : [ {
+      "requiredDistribution" : {
+        "type" : "HASH",
+        "keys" : [ 0 ]
+      },
+      "damBehavior" : "PIPELINED",
+      "priority" : 0
+    } ],
+    "outputType" : "ROW<`InstrumentId` INT NOT NULL>",
+    "description" : "Exchange(distribution=[hash[InstrumentId]])"
+  }, {
+    "id" : 3,
+    "type" : "stream-exec-changelog-normalize_1",
+    "configuration" : {
+      "table.exec.mini-batch.enabled" : "false",
+      "table.exec.mini-batch.size" : "-1"
+    },
+    "uniqueKeys" : [ 0 ],
+    "generateUpdateBefore" : true,
+    "state" : [ {
+      "index" : 0,
+      "ttl" : "0 ms",
+      "name" : "changelogNormalizeState"
+    } ],
+    "inputProperties" : [ {
+      "requiredDistribution" : {
+        "type" : "UNKNOWN"
+      },
+      "damBehavior" : "PIPELINED",
+      "priority" : 0
+    } ],
+    "outputType" : "ROW<`InstrumentId` INT NOT NULL>",
+    "description" : "ChangelogNormalize(key=[InstrumentId])"
+  }, {
     "id" : 4,
     "type" : "stream-exec-exchange_1",
     "inputProperties" : [ {
@@ -95,6 +89,84 @@
     "description" : "Exchange(distribution=[hash[InstrumentId]])"
   }, {
     "id" : 5,
+    "type" : "stream-exec-table-source-scan_1",
+    "scanTableSource" : {
+      "table" : {
+        "identifier" : "`default_catalog`.`default_database`.`by_cid`",
+        "resolvedTable" : {
+          "schema" : {
+            "columns" : [ {
+              "name" : "InstrumentId",
+              "dataType" : "INT NOT NULL"
+            }, {
+              "name" : "CID",
+              "dataType" : "BIGINT NOT NULL"
+            }, {
+              "name" : "other1",
+              "dataType" : "VARCHAR(2147483647)"
+            } ],
+            "primaryKey" : {
+              "name" : "PRIMARY",
+              "type" : "PRIMARY_KEY",
+              "columns" : [ "InstrumentId", "CID" ]
+            }
+          }
+        }
+      }
+    },
+    "outputType" : "ROW<`InstrumentId` INT NOT NULL, `CID` BIGINT NOT NULL, `other1` VARCHAR(2147483647)>",
+    "description" : "TableSourceScan(table=[[default_catalog, default_database, by_cid]], fields=[InstrumentId, CID, other1])"
+  }, {
+    "id" : 6,
+    "type" : "stream-exec-exchange_1",
+    "inputProperties" : [ {
+      "requiredDistribution" : {
+        "type" : "HASH",
+        "keys" : [ 0, 1 ]
+      },
+      "damBehavior" : "PIPELINED",
+      "priority" : 0
+    } ],
+    "outputType" : "ROW<`InstrumentId` INT NOT NULL, `CID` BIGINT NOT NULL, `other1` VARCHAR(2147483647)>",
+    "description" : "Exchange(distribution=[hash[InstrumentId, CID]])"
+  }, {
+    "id" : 7,
+    "type" : "stream-exec-changelog-normalize_1",
+    "configuration" : {
+      "table.exec.mini-batch.enabled" : "false",
+      "table.exec.mini-batch.size" : "-1"
+    },
+    "uniqueKeys" : [ 0, 1 ],
+    "generateUpdateBefore" : true,
+    "state" : [ {
+      "index" : 0,
+      "ttl" : "0 ms",
+      "name" : "changelogNormalizeState"
+    } ],
+    "inputProperties" : [ {
+      "requiredDistribution" : {
+        "type" : "UNKNOWN"
+      },
+      "damBehavior" : "PIPELINED",
+      "priority" : 0
+    } ],
+    "outputType" : "ROW<`InstrumentId` INT NOT NULL, `CID` BIGINT NOT NULL, `other1` VARCHAR(2147483647)>",
+    "description" : "ChangelogNormalize(key=[InstrumentId, CID])"
+  }, {
+    "id" : 8,
+    "type" : "stream-exec-exchange_1",
+    "inputProperties" : [ {
+      "requiredDistribution" : {
+        "type" : "HASH",
+        "keys" : [ 0 ]
+      },
+      "damBehavior" : "PIPELINED",
+      "priority" : 0
+    } ],
+    "outputType" : "ROW<`InstrumentId` INT NOT NULL, `CID` BIGINT NOT NULL, `other1` VARCHAR(2147483647)>",
+    "description" : "Exchange(distribution=[hash[InstrumentId]])"
+  }, {
+    "id" : 9,
     "type" : "stream-exec-multi-join_1",
     "joinTypes" : [ "INNER", "INNER" ],
     "joinConditions" : [ {
@@ -107,11 +179,11 @@
       "internalName" : "$=$1",
       "operands" : [ {
         "kind" : "INPUT_REF",
-        "inputIndex" : 0,
+        "inputIndex" : 1,
         "type" : "INT NOT NULL"
       }, {
         "kind" : "INPUT_REF",
-        "inputIndex" : 3,
+        "inputIndex" : 0,
         "type" : "INT NOT NULL"
       } ],
       "type" : "BOOLEAN NOT NULL"
@@ -122,11 +194,11 @@
       "internalName" : "$=$1",
       "operands" : [ {
         "kind" : "INPUT_REF",
-        "inputIndex" : 0,
+        "inputIndex" : 1,
         "type" : "INT NOT NULL"
       }, {
         "kind" : "INPUT_REF",
-        "inputIndex" : 3,
+        "inputIndex" : 0,
         "type" : "INT NOT NULL"
       } ],
       "type" : "BOOLEAN NOT NULL"
@@ -139,7 +211,7 @@
         "rightFieldIndex" : 0
       } ]
     },
-    "inputUniqueKeys" : [ [ [ 0, 1 ] ], [ [ 0 ] ] ],
+    "inputUniqueKeys" : [ [ [ 0 ] ], [ [ 0, 1 ] ] ],
     "state" : [ {
       "index" : 0,
       "ttl" : "0 ms",
@@ -164,22 +236,22 @@
       "damBehavior" : "PIPELINED",
       "priority" : 1
     } ],
-    "outputType" : "ROW<`InstrumentId` INT NOT NULL, `CID` BIGINT NOT NULL, `other1` VARCHAR(2147483647), `InstrumentId0` INT NOT NULL>",
-    "description" : "MultiJoin(joinFilter=[=($0, $3)], joinTypes=[[INNER, INNER]], joinConditions=[[true, =($0, $3)]], joinAttributeMap=[{1=[LeftInputId:0;LeftFieldIndex:0;RightInputId:1;RightFieldIndex:0;]}], select=[InstrumentId,CID,other1,InstrumentId0], rowType=[RecordType(INTEGER InstrumentId, BIGINT CID, VARCHAR(2147483647) other1, INTEGER InstrumentId0)])"
+    "outputType" : "ROW<`InstrumentId` INT NOT NULL, `InstrumentId0` INT NOT NULL, `CID` BIGINT NOT NULL, `other1` VARCHAR(2147483647)>",
+    "description" : "MultiJoin(joinFilter=[=($1, $0)], joinTypes=[[INNER, INNER]], joinConditions=[[true, =($1, $0)]], joinAttributeMap=[{1=[LeftInputId:0;LeftFieldIndex:0;RightInputId:1;RightFieldIndex:0;]}], select=[InstrumentId,InstrumentId0,CID,other1], rowType=[RecordType(INTEGER InstrumentId, INTEGER InstrumentId0, BIGINT CID, VARCHAR(2147483647) other1)])"
   }, {
-    "id" : 6,
+    "id" : 10,
     "type" : "stream-exec-calc_1",
     "projection" : [ {
       "kind" : "INPUT_REF",
-      "inputIndex" : 0,
+      "inputIndex" : 1,
       "type" : "INT NOT NULL"
     }, {
       "kind" : "INPUT_REF",
-      "inputIndex" : 1,
+      "inputIndex" : 2,
       "type" : "BIGINT NOT NULL"
     }, {
       "kind" : "INPUT_REF",
-      "inputIndex" : 2,
+      "inputIndex" : 3,
       "type" : "VARCHAR(2147483647)"
     } ],
     "condition" : null,
@@ -191,9 +263,9 @@
       "priority" : 0
     } ],
     "outputType" : "ROW<`InstrumentId` INT NOT NULL, `CID` BIGINT NOT NULL, `other1` VARCHAR(2147483647)>",
-    "description" : "Calc(select=[InstrumentId, CID, other1])"
+    "description" : "Calc(select=[InstrumentId0 AS InstrumentId, CID, other1])"
   }, {
-    "id" : 7,
+    "id" : 11,
     "type" : "stream-exec-sink_1",
     "configuration" : {
       "table.exec.sink.keyed-shuffle" : "AUTO",
@@ -226,8 +298,13 @@
         }
       }
     },
-    "inputChangelogMode" : [ "INSERT", "UPDATE_AFTER", "DELETE" ],
-    "inputUpsertKey" : [ 0, 1 ],
+    "inputChangelogMode" : [ "INSERT", "UPDATE_BEFORE", "UPDATE_AFTER", "DELETE" ],
+    "requireUpsertMaterialize" : true,
+    "state" : [ {
+      "index" : 0,
+      "ttl" : "0 ms",
+      "name" : "sinkMaterializeState"
+    } ],
     "inputProperties" : [ {
       "requiredDistribution" : {
         "type" : "UNKNOWN"
@@ -236,7 +313,7 @@
       "priority" : 0
     } ],
     "outputType" : "ROW<`InstrumentId` INT NOT NULL, `CID` BIGINT NOT NULL, `other1` VARCHAR(2147483647)>",
-    "description" : "Sink(table=[default_catalog.default_database.aggregation], fields=[InstrumentId, CID, other1])"
+    "description" : "Sink(table=[default_catalog.default_database.aggregation], fields=[InstrumentId, CID, other1], upsertMaterialize=[true])"
   } ],
   "edges" : [ {
     "source" : 1,
@@ -246,22 +323,15 @@
     },
     "shuffleMode" : "PIPELINED"
   }, {
+    "source" : 2,
+    "target" : 3,
+    "shuffle" : {
+      "type" : "FORWARD"
+    },
+    "shuffleMode" : "PIPELINED"
+  }, {
     "source" : 3,
     "target" : 4,
-    "shuffle" : {
-      "type" : "FORWARD"
-    },
-    "shuffleMode" : "PIPELINED"
-  }, {
-    "source" : 2,
-    "target" : 5,
-    "shuffle" : {
-      "type" : "FORWARD"
-    },
-    "shuffleMode" : "PIPELINED"
-  }, {
-    "source" : 4,
-    "target" : 5,
     "shuffle" : {
       "type" : "FORWARD"
     },
@@ -276,6 +346,41 @@
   }, {
     "source" : 6,
     "target" : 7,
+    "shuffle" : {
+      "type" : "FORWARD"
+    },
+    "shuffleMode" : "PIPELINED"
+  }, {
+    "source" : 7,
+    "target" : 8,
+    "shuffle" : {
+      "type" : "FORWARD"
+    },
+    "shuffleMode" : "PIPELINED"
+  }, {
+    "source" : 4,
+    "target" : 9,
+    "shuffle" : {
+      "type" : "FORWARD"
+    },
+    "shuffleMode" : "PIPELINED"
+  }, {
+    "source" : 8,
+    "target" : 9,
+    "shuffle" : {
+      "type" : "FORWARD"
+    },
+    "shuffleMode" : "PIPELINED"
+  }, {
+    "source" : 9,
+    "target" : 10,
+    "shuffle" : {
+      "type" : "FORWARD"
+    },
+    "shuffleMode" : "PIPELINED"
+  }, {
+    "source" : 10,
+    "target" : 11,
     "shuffle" : {
       "type" : "FORWARD"
     },

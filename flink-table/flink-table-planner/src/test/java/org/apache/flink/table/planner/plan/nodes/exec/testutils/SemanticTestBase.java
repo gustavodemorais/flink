@@ -18,6 +18,8 @@
 
 package org.apache.flink.table.planner.plan.nodes.exec.testutils;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import org.apache.flink.table.api.EnvironmentSettings;
 import org.apache.flink.table.api.TableConfig;
 import org.apache.flink.table.api.TableEnvironment;
@@ -35,7 +37,6 @@ import org.apache.flink.table.test.program.TableTestProgramRunner;
 import org.apache.flink.table.test.program.TestStep;
 import org.apache.flink.table.test.program.TestStep.TestKind;
 import org.apache.flink.test.junit5.MiniClusterExtension;
-
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -46,8 +47,6 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Base for tests that do not fall into the {@link RestoreTestBase} category, but use the {@link
@@ -96,6 +95,7 @@ public abstract class SemanticTestBase implements TableTestProgramRunner {
         for (SinkTestStep sinkTestStep : program.getSetupSinkTestSteps()) {
             List<String> actualResults = getActualResults(sinkTestStep, sinkTestStep.name);
             assertThat(actualResults)
+                    .as("%s", program.id)
                     .containsExactlyInAnyOrder(
                             sinkTestStep.getExpectedAsStrings().toArray(new String[0]));
         }

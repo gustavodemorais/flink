@@ -18,6 +18,14 @@
 
 package org.apache.flink.table.planner.plan.rules.physical.stream;
 
+import org.apache.calcite.plan.RelOptRule;
+import org.apache.calcite.plan.RelTraitSet;
+import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.convert.ConverterRule;
+import org.apache.calcite.rex.RexCall;
+import org.apache.calcite.rex.RexInputRef;
+import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.sql.SqlKind;
 import org.apache.flink.table.planner.calcite.FlinkTypeFactory;
 import org.apache.flink.table.planner.plan.nodes.FlinkConventions;
 import org.apache.flink.table.planner.plan.nodes.logical.FlinkLogicalMultiJoin;
@@ -27,15 +35,6 @@ import org.apache.flink.table.runtime.operators.join.stream.keyselector.Attribut
 import org.apache.flink.table.runtime.operators.join.stream.keyselector.AttributeBasedJoinKeyExtractor.ConditionAttributeRef;
 import org.apache.flink.table.runtime.operators.join.stream.keyselector.JoinKeyExtractor;
 import org.apache.flink.table.types.logical.RowType;
-
-import org.apache.calcite.plan.RelOptRule;
-import org.apache.calcite.plan.RelTraitSet;
-import org.apache.calcite.rel.RelNode;
-import org.apache.calcite.rel.convert.ConverterRule;
-import org.apache.calcite.rex.RexCall;
-import org.apache.calcite.rex.RexInputRef;
-import org.apache.calcite.rex.RexNode;
-import org.apache.calcite.sql.SqlKind;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayList;
@@ -188,6 +187,19 @@ public class StreamPhysicalMultiJoinRule extends ConverterRule {
         } else {
             leftRef = inputRef2;
             rightRef = inputRef1;
+        }
+
+        // Since we are building attribute references that do left -> right index,
+        // we need a special base case for input 0 which has no input to the left.
+        // So we do {-1, -1} -> {0, attributeIndex}
+        if (leftRef.inputIndex == 0) {
+            final ConditionAttributeRef firstAttrRef =
+                    new ConditionAttributeRef(
+                            -1,
+                            -1,
+                            leftRef.inputIndex,
+                            leftRef.attributeIndex);
+            joinAttributeMap.computeIfAbsent(leftRef.inputIndex, k -> new ArrayList<>()).add(firstAttrRef);
         }
 
         final ConditionAttributeRef attrRef =
