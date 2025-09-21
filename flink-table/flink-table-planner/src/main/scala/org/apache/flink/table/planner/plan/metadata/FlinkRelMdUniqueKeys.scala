@@ -17,6 +17,18 @@
  */
 package org.apache.flink.table.planner.plan.metadata
 
+import com.google.common.collect.ImmutableSet
+import org.apache.calcite.plan.RelOptTable
+import org.apache.calcite.plan.hep.HepRelVertex
+import org.apache.calcite.plan.volcano.RelSubset
+import org.apache.calcite.rel.`type`.RelDataTypeFactory
+import org.apache.calcite.rel.core._
+import org.apache.calcite.rel.metadata._
+import org.apache.calcite.rel.{RelNode, SingleRel}
+import org.apache.calcite.rex.{RexCall, RexInputRef, RexNode}
+import org.apache.calcite.sql.SqlKind
+import org.apache.calcite.sql.fun.SqlStdOperatorTable
+import org.apache.calcite.util.{Bug, BuiltInMethod, ImmutableBitSet, Util}
 import org.apache.flink.table.catalog.{CatalogTable, ResolvedCatalogBaseTable}
 import org.apache.flink.table.connector.ChangelogMode
 import org.apache.flink.table.planner._
@@ -32,21 +44,7 @@ import org.apache.flink.table.runtime.operators.rank.RankType
 import org.apache.flink.table.types.logical.utils.LogicalTypeCasts
 import org.apache.flink.types.RowKind
 
-import com.google.common.collect.ImmutableSet
-import org.apache.calcite.plan.RelOptTable
-import org.apache.calcite.plan.hep.HepRelVertex
-import org.apache.calcite.plan.volcano.RelSubset
-import org.apache.calcite.rel.`type`.RelDataTypeFactory
-import org.apache.calcite.rel.{RelNode, SingleRel}
-import org.apache.calcite.rel.core._
-import org.apache.calcite.rel.metadata._
-import org.apache.calcite.rex.{RexCall, RexInputRef, RexNode}
-import org.apache.calcite.sql.SqlKind
-import org.apache.calcite.sql.fun.SqlStdOperatorTable
-import org.apache.calcite.util.{Bug, BuiltInMethod, ImmutableBitSet, Util}
-
 import java.util
-
 import scala.collection.JavaConversions._
 
 class FlinkRelMdUniqueKeys private extends MetadataHandler[BuiltInMetadata.UniqueKeys] {
@@ -533,6 +531,14 @@ class FlinkRelMdUniqueKeys private extends MetadataHandler[BuiltInMetadata.Uniqu
     )
   }
 
+  /*
+  TODO Complement this javadoc
+  * This method gets the possible unique keys from a join key with three different strategies
+  * 1. The simplest one, if there are join keys on the left and on the right, it will union them to create one superset. Example {0,1} and {0} will create {0,1,2}, where the 2 is the first column of the right side
+  * 2. If isRightUnique, means that the join condition contains the right unique key, we can take the left keys to identify the resulting rows
+  * 3. If isLeftUnique we can take the right keys to identify the resulting rows
+  *
+  * More details below */
   def getJoinUniqueKeys(
       joinRelType: JoinRelType,
       leftFieldsCount: Int,
@@ -561,8 +567,11 @@ class FlinkRelMdUniqueKeys private extends MetadataHandler[BuiltInMetadata.Uniqu
       }
       if (leftUniqueKeys != null) {
         res.foreach {
+          // 1. We need to get the superset primary key from the union from both sides, because that guarantees uniqueness.
+          // If one side is unique on {0, 1} and the other on {0}, then the union {0, 1} is unique, but {0} is not.
           colMaskRight =>
             leftUniqueKeys.foreach(colMaskLeft => retSet.add(colMaskLeft.union(colMaskRight)))
+
         }
       }
       res
@@ -575,9 +584,12 @@ class FlinkRelMdUniqueKeys private extends MetadataHandler[BuiltInMetadata.Uniqu
     val leftUnique = isLeftUnique
     val rightUnique = isRightUnique
 
-    // if the right hand side is unique on its equijoin columns, then we can
+    // 2. if the right hand side is unique on its equijoin columns, then we can
     // add the unique keys from left if the left hand side is not null
     // generating
+    // For example, imagine joining a "Students" table (left) with a "Classes" table (right) on class_id.
+    // If each class_id appears only once in the Classes table, and we're doing an inner join,
+    // then student_id from the Students table can still uniquely identify each row in the joined result.
     if (
       rightUnique != null
       && rightUnique
@@ -587,7 +599,7 @@ class FlinkRelMdUniqueKeys private extends MetadataHandler[BuiltInMetadata.Uniqu
       retSet.addAll(leftUniqueKeys)
     }
 
-    // same as above except left and right are reversed
+    // 3. same as above except left and right are reversed
     if (
       leftUnique != null
       && leftUnique

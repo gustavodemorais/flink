@@ -270,6 +270,10 @@ class FlinkRelMdUpsertKeys private extends MetadataHandler[UpsertKeys] {
     )
   }
 
+  /*
+  * Upsert keys are unique keys that are distributed to the same node. That means, if
+  * we have the composite unique key {0, 1, 2} and the distribution key, in the case of multi joins,
+  * the common join key, is 1, then this unique key qualifies as an upsert key.*/
   def getUpsertKeys(
       multiJoin: StreamPhysicalMultiJoin,
       mq: RelMetadataQuery): JSet[ImmutableBitSet] = {
@@ -277,54 +281,39 @@ class FlinkRelMdUpsertKeys private extends MetadataHandler[UpsertKeys] {
     val inputs = multiJoin.getInputs
     val joinTypes = multiJoin.getJoinTypes
 
-    // Start with the first input as the left side
+    // Initialize with first input
     var leftFieldCount = inputs.get(0).getRowType.getFieldCount
     var upsertKeys = fmq.getUpsertKeys(inputs.get(0))
 
-    // We have the same distribution keys for all inputs, the common join key.
-    // However, for each input it has a different index local to that input and that's why
-    // If we want to calculate all possible upsert keys,
-    // we need to do it for each of the distribution keys.
-    val allDistributionKeysLeft = new java.util.HashSet[ImmutableBitSet]()
-    allDistributionKeysLeft.add(ImmutableBitSet.of(multiJoin.getCommonJoinKeyIndices(0): _*))
+    // Track all distribution keys from left side (adjusted for field count)
+    val leftDistributionKeys = new java.util.HashSet[ImmutableBitSet]()
+    leftDistributionKeys.add(ImmutableBitSet.of(multiJoin.getCommonJoinKeyIndices(0): _*))
 
-    // Iteratively join each subsequent input
+    // Process each subsequent input as right side of join
     for (i <- 1 until inputs.size) {
       val rightInput = inputs.get(i)
-      val rightUpsert = fmq.getUpsertKeys(rightInput)
-      val joinRelType = joinTypes.get(i)
+      val rightUpsertKeys = fmq.getUpsertKeys(rightInput)
+      val joinType = joinTypes.get(i)
+      val rightDistributionKeys = ImmutableBitSet.of(multiJoin.getCommonJoinKeyIndices(i): _*)
 
-      val distributionKeysRight = multiJoin.getCommonJoinKeyIndices(i)
-      val distributionRight = ImmutableBitSet.of(distributionKeysRight: _*)
+      // Calculate upsert keys for this join
+      val newUpsertKeys = FlinkRelMdUniqueKeys.INSTANCE.getJoinUniqueKeys(
+        joinType,
+        leftFieldCount,
+        filterKeys(upsertKeys, leftDistributionKeys),
+        filterKeys(rightUpsertKeys, rightDistributionKeys), // we can probably pass down rightUpsertKeys here
+        areColumnsUpsertKeys(upsertKeys, leftDistributionKeys),
+        areColumnsUpsertKeys(rightUpsertKeys, rightDistributionKeys)
+      )
 
-      // Calculate upsert keys for this join operation
-      val newCombinedUpsertKeys = new java.util.HashSet[ImmutableBitSet]()
-      for (distributionLeft <- allDistributionKeysLeft) {
-         val newUpsertKeys = FlinkRelMdUniqueKeys.INSTANCE.getJoinUniqueKeys(
-          joinRelType,
-          leftFieldCount,
-          filterKeys(upsertKeys, distributionLeft),
-          filterKeys(rightUpsert, distributionRight),
-          areColumnsUpsertKeys(upsertKeys, distributionLeft),
-          areColumnsUpsertKeys(rightUpsert, distributionRight)
-        )
+      upsertKeys = newUpsertKeys
 
-        if (newUpsertKeys != null) {
-          newCombinedUpsertKeys.addAll(newUpsertKeys)
-        }
-      }
-
-      upsertKeys = newCombinedUpsertKeys
-
-      // Update fields for the next iteration
-      // Add distribution keys of the right side, adjusting their indices
-      val tmpMask = ImmutableBitSet.builder
-      distributionRight.foreach(bit => tmpMask.set(bit + leftFieldCount))
-      val adjustedDistributionRight = tmpMask.build()
-      allDistributionKeysLeft.add(adjustedDistributionRight)
+      // Adjust right distribution keys to left side field indices and add to left keys
+      val adjustedRightKeys = ImmutableBitSet.builder
+      rightDistributionKeys.foreach(bit => adjustedRightKeys.set(bit + leftFieldCount))
+      leftDistributionKeys.add(adjustedRightKeys.build())
 
       leftFieldCount += rightInput.getRowType.getFieldCount
-
     }
 
     upsertKeys
@@ -339,11 +328,24 @@ class FlinkRelMdUpsertKeys private extends MetadataHandler[UpsertKeys] {
     val fmq = FlinkRelMetadataQuery.reuseOrCreate(mq)
     val leftKeys = fmq.getUpsertKeys(left)
     val rightKeys = fmq.getUpsertKeys(right)
+
+    // We're calculating unique keys, which are upsert keys if they contain the distribution keys
+    // Thus we can use the getJoinUniqueKeys helper but pass down upsert keys,
+    // which are the filtered unique keys
     FlinkRelMdUniqueKeys.INSTANCE.getJoinUniqueKeys(
       joinRelType,
       left.getRowType.getFieldCount,
+      // This filters the keys to only those that contain the distribution key to guarantee
+      // that they are upsert keys.
+      // Note: since we have an exchange node before a join, filterKeys has already been applied once
+      // as we called fmq.getUpsertKeys(...) and is probably redundant here. Keeping it creates no harm
+      // as a safety measure if we have a join which no Exchange before it.
       filterKeys(leftKeys, joinInfo.leftSet),
       filterKeys(rightKeys, joinInfo.rightSet),
+      // This checks if the equi join conditions for the join, which are the distribution keys for join, contain the upsert keys.
+      // This guarantees that the upsert keys are distributed to the same node and thus this side will only produce one row for each upsert key
+      // For example, if we have the upsert key for left_table {A} and the equi join condition is on left_table.A = right.table.B AND left_table.x = right_table.y,
+      // then we know that the upsert key {A} contains the distribution key {A} and thus the left side will only produce one row for each upsert key.
       areColumnsUpsertKeys(leftKeys, joinInfo.leftSet),
       areColumnsUpsertKeys(rightKeys, joinInfo.rightSet)
     )
@@ -371,6 +373,11 @@ class FlinkRelMdUpsertKeys private extends MetadataHandler[UpsertKeys] {
     FlinkRelMetadataQuery.reuseOrCreate(mq).getUpsertKeys(subset.getInput)
   }
 
+  /*
+  * This function is used to filter keys only if they contain the distribution key.
+  * Upsert keys can only be upsert keys if they are distributed to the same node. If the
+  * upsertkey contains the distribution key as part of it, they'll be routed to the same node and
+  * thus are upsert keys */
   private def filterKeys(
       keys: JSet[ImmutableBitSet],
       distributionKey: ImmutableBitSet): JSet[ImmutableBitSet] = {
@@ -381,11 +388,31 @@ class FlinkRelMdUpsertKeys private extends MetadataHandler[UpsertKeys] {
     }
   }
 
+  private def filterKeys(
+      keys: JSet[ImmutableBitSet],
+      distributionKeys: JSet[ImmutableBitSet]): JSet[ImmutableBitSet] = {
+    if (keys != null) {
+      keys.filter(k => distributionKeys.exists(dk => k.contains(dk)))
+    } else {
+      null
+    }
+  }
+
   private def areColumnsUpsertKeys(
       keys: JSet[ImmutableBitSet],
       columns: ImmutableBitSet): Boolean = {
     if (keys != null) {
       keys.exists(columns.contains)
+    } else {
+      false
+    }
+  }
+
+  private def areColumnsUpsertKeys(
+      keys: JSet[ImmutableBitSet],
+      columns: JSet[ImmutableBitSet]): Boolean = {
+    if (keys != null) {
+      keys.exists(k => columns.exists(c => c.contains(k)))
     } else {
       false
     }

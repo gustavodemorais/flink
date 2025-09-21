@@ -36,6 +36,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 public class JoinInputSideSpec implements Serializable {
     private static final long serialVersionUID = 3178408082297179959L;
 
+    // todo add a bit of explanation which one is used in which case
     private final boolean inputSideHasUniqueKey;
     private final boolean joinKeyContainsUniqueKey;
     @Nullable private final InternalTypeInfo<RowData> uniqueKeyType;

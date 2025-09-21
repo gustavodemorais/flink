@@ -1148,13 +1148,11 @@ public class MultiJoinTestPrograms {
                                     + "INNER JOIN OrdersNullSafe o ON u.user_id IS NOT DISTINCT FROM o.user_id")
                     .build();
 
-    static final TableTestProgram MULTI_JOIN_TWO_WAY_JOIN_PRESERVES_UPSERT_KEY =
+    static final TableTestProgram MULTI_JOIN_TWO_WAY_JOIN_PRESERVES_UPSERT_KEY_WITH_RESTORE =
             TableTestProgram.of(
-                            "two-way-upsert-preserves-key", "validates upsert with non key filter")
-                    .setupConfig(
-                            ExecutionConfigOptions.TABLE_EXEC_SINK_UPSERT_MATERIALIZE,
-                            ExecutionConfigOptions.UpsertMaterialize.AUTO)
-                    .setupConfig(OptimizerConfigOptions.TABLE_OPTIMIZER_MULTI_JOIN_ENABLED, true)
+                            "two-way-upsert-preserves-key-with-restore",
+                            "validates upsert with non key filter with restore")
+                    .setupConfig(OptimizerConfigOptions.TABLE_OPTIMIZER_MULTI_JOIN_ENABLED, false)
                     .setupTableSource(
                             SourceTestStep.newBuilder("by_cid")
                                     .addOption("changelog-mode", "I, UA,D")
@@ -1163,12 +1161,13 @@ public class MultiJoinTestPrograms {
                                             "CID BIGINT NOT NULL",
                                             "other1 STRING",
                                             "CONSTRAINT `PRIMARY` PRIMARY KEY (`InstrumentId`, `CID`) NOT ENFORCED")
-                                    .producedValues(
+                                    .producedBeforeRestore(
                                             Row.ofKind(RowKind.INSERT, 1, 1L, "a"),
+                                            Row.ofKind(RowKind.UPDATE_AFTER, 1, 1L, "a_updated"))
+                                    .producedAfterRestore(
                                             Row.ofKind(RowKind.INSERT, 1, 2L, "b"),
-                                            Row.ofKind(RowKind.INSERT, 2, 1L, "c"),
-                                            Row.ofKind(RowKind.UPDATE_AFTER, 1, 1L, "a_updated"),
-                                            Row.ofKind(RowKind.DELETE, 1, 2L, "b"))
+                                            Row.ofKind(RowKind.DELETE, 1, 2L, "b"),
+                                            Row.ofKind(RowKind.INSERT, 3, 1L, "b"))
                                     .build())
                     .setupTableSource(
                             SourceTestStep.newBuilder("sharded")
@@ -1178,12 +1177,10 @@ public class MultiJoinTestPrograms {
                                             "Shard INT NOT NULL",
                                             "other2 STRING",
                                             "CONSTRAINT `PRIMARY` PRIMARY KEY (`InstrumentId`) NOT ENFORCED")
-                                    .producedValues(
-                                            Row.ofKind(RowKind.INSERT, 1, 1, "shard_a"),
-                                            Row.ofKind(RowKind.INSERT, 2, 2, "shard_b"),
-                                            Row.ofKind(
-                                                    RowKind.UPDATE_AFTER, 1, 1, "shard_a_updated"),
-                                            Row.ofKind(RowKind.DELETE, 2, 2, "shard_b"))
+                                    .producedBeforeRestore(
+                                            Row.ofKind(RowKind.INSERT, 1, 1, "shard_a"))
+                                    .producedAfterRestore(
+                                            Row.ofKind(RowKind.UPDATE_AFTER, 3, 1, "another shard"))
                                     .build())
                     .setupTableSink(
                             SinkTestStep.newBuilder("aggregation")
@@ -1193,35 +1190,28 @@ public class MultiJoinTestPrograms {
                                             "`CID` BIGINT NOT NULL",
                                             "other3 STRING",
                                             "CONSTRAINT `PRIMARY` PRIMARY KEY (`InstrumentId`, `CID`) NOT ENFORCED")
-                                    .consumedValues(
-                                            "+I[1, 1, shard_a]",
-                                            "+I[1, 2, shard_a]",
-                                            "+I[2, 1, shard_b]",
-                                            "+U[1, 2, shard_a_updated]",
-                                            "+U[1, 1, shard_a_updated]",
-                                            "-D[2, 1, shard_b]",
-                                            "+U[1, 1, shard_a_updated]",
-                                            "-D[1, 2, shard_a_updated]")
+                                    .consumedBeforeRestore("+I[1, 1, a_updated]")
+                                    .consumedAfterRestore("+I[3, 1, b]")
+                                    .testMaterializedData()
                                     .build())
                     .runSql(
                             "INSERT INTO `aggregation`\n"
                                     + "SELECT\n"
                                     + "    l.InstrumentId,\n"
                                     + "    l.CID,\n"
-                                    + "    r.other2\n"
-                                    + "FROM `by_cid` AS l\n"
-                                    + "JOIN sharded r\n"
-                                    + "  ON  l.InstrumentId = r.InstrumentId\n")
+                                    + "    l.other1\n"
+                                    + "FROM sharded r\n"
+                                    + "JOIN `by_cid` AS l\n"
+                                    //+ "  ON  l.InstrumentId = r.InstrumentId\n"
+                                    + "  ON  TRUE\n"
+                    )
                     .build();
 
-    static final TableTestProgram MULTI_JOIN_THREE_WAY_JOIN_PRESERVES_UPSERT_KEY =
+    static final TableTestProgram MULTI_JOIN_THREE_WAY_JOIN_PRESERVES_UPSERT_KEY_WITH_RESTORE =
             TableTestProgram.of(
-                            "three-way-upsert-preserves-key", "validates upsert with non key filter")
-                    .setupConfig(
-                            ExecutionConfigOptions.TABLE_EXEC_SINK_UPSERT_MATERIALIZE,
-                            ExecutionConfigOptions.UpsertMaterialize.AUTO)
+                            "three-way-upsert-preserves-key-with-restore",
+                            "validates upsert with non key filter with restore")
                     .setupConfig(OptimizerConfigOptions.TABLE_OPTIMIZER_MULTI_JOIN_ENABLED, true)
-                    .setupConfig(TableConfigOptions.PLAN_FORCE_RECOMPILE, true)
                     .setupTableSource(
                             SourceTestStep.newBuilder("sharded")
                                     .addOption("changelog-mode", "I, UA,D")
@@ -1230,12 +1220,10 @@ public class MultiJoinTestPrograms {
                                             "Shard INT NOT NULL",
                                             "other2 STRING",
                                             "CONSTRAINT `PRIMARY` PRIMARY KEY (`InstrumentId`) NOT ENFORCED")
-                                    .producedValues(
-                                            Row.ofKind(RowKind.INSERT, 1, 1, "shard_a"),
-                                            Row.ofKind(RowKind.INSERT, 2, 2, "shard_b"),
-                                            Row.ofKind(
-                                                    RowKind.UPDATE_AFTER, 1, 1, "shard_a_updated"),
-                                            Row.ofKind(RowKind.DELETE, 2, 2, "shard_b"))
+                                    .producedBeforeRestore(
+                                            Row.ofKind(RowKind.INSERT, 1, 1, "shard_a"))
+                                    .producedAfterRestore(
+                                            Row.ofKind(RowKind.INSERT, 2, 1, "shard_b"))
                                     .build())
                     .setupTableSource(
                             SourceTestStep.newBuilder("by_cid")
@@ -1245,12 +1233,12 @@ public class MultiJoinTestPrograms {
                                             "CID BIGINT NOT NULL",
                                             "other1 STRING",
                                             "CONSTRAINT `PRIMARY` PRIMARY KEY (`InstrumentId`, `CID`) NOT ENFORCED")
-                                    .producedValues(
+                                    .producedBeforeRestore(
                                             Row.ofKind(RowKind.INSERT, 1, 1L, "a"),
-                                            Row.ofKind(RowKind.INSERT, 1, 2L, "b"),
+                                            Row.ofKind(RowKind.INSERT, 1, 2L, "b"))
+                                    .producedAfterRestore(
                                             Row.ofKind(RowKind.INSERT, 2, 1L, "c"),
-                                            Row.ofKind(RowKind.UPDATE_AFTER, 1, 1L, "a_updated"),
-                                            Row.ofKind(RowKind.DELETE, 1, 2L, "b"))
+                                            Row.ofKind(RowKind.INSERT, 2, 2L, "d"))
                                     .build())
                     .setupTableSource(
                             SourceTestStep.newBuilder("sensor")
@@ -1260,12 +1248,12 @@ public class MultiJoinTestPrograms {
                                             "sensorId BIGINT NOT NULL",
                                             "other1 STRING",
                                             "CONSTRAINT `PRIMARY` PRIMARY KEY (`InstrumentId`, `sensorId`) NOT ENFORCED")
-                                    .producedValues(
+                                    .producedBeforeRestore(
                                             Row.ofKind(RowKind.INSERT, 1, 1L, "a"),
-                                            Row.ofKind(RowKind.INSERT, 1, 2L, "b"),
+                                            Row.ofKind(RowKind.INSERT, 1, 2L, "b"))
+                                    .producedAfterRestore(
                                             Row.ofKind(RowKind.INSERT, 2, 1L, "c"),
-                                            Row.ofKind(RowKind.UPDATE_AFTER, 1, 1L, "a_updated"),
-                                            Row.ofKind(RowKind.DELETE, 1, 2L, "b"))
+                                            Row.ofKind(RowKind.INSERT, 2, 2L, "d"))
                                     .build())
                     .setupTableSink(
                             SinkTestStep.newBuilder("aggregation")
@@ -1278,17 +1266,11 @@ public class MultiJoinTestPrograms {
                                             "`InstrumentId3` INT NOT NULL",
                                             "other3 STRING",
                                             "CONSTRAINT `PRIMARY` PRIMARY KEY (`InstrumentId`, `CID`, `InstrumentId2`, `sensorId`, `InstrumentId3`) NOT ENFORCED")
-                                    .consumedValues(
-                                            "+I[1, 1, 1, 1, shard_a]",
-                                            "+I[1, 2, 1, 1, shard_a]",
-                                            "+U[1, 2, 1, 1, shard_a_updated]",
-                                            "+U[1, 1, 1, 1, shard_a_updated]",
-                                            "+I[2, 1, 2, 1, shard_b]",
-                                            "-D[2, 1, 2, 1, shard_b]",
-                                            "+U[1, 1, 1, 1, shard_a_updated]",
-                                            "-D[1, 2, 1, 1, shard_a_updated]"
-                                    )
-                                    //.testMaterializedData()
+                                    .consumedBeforeRestore(
+                                            "+I[1, 1, 1, 1, shard_a]", "+I[1, 2, 1, 1, shard_a]")
+                                    .consumedAfterRestore(
+                                            "+I[2, 1, 2, 1, shard_b]", "+I[2, 2, 2, 2, shard_b]")
+                                    .testMaterializedData()
                                     .build())
                     .runSql(
                             "INSERT INTO `aggregation`\n"
@@ -1303,8 +1285,7 @@ public class MultiJoinTestPrograms {
                                     + "JOIN `by_cid` AS l\n"
                                     + "  ON  l.InstrumentId = r.InstrumentId\n"
                                     + "JOIN sensor s\n"
-                                    + "  ON  l.InstrumentId = s.InstrumentId"
-                    )
+                                    + "  ON  l.InstrumentId = s.InstrumentId")
                     .build();
 
     public static final TableTestProgram MULTI_JOIN_THREE_WAY_JOIN_PRESERVES_UPSERT_KEY2 =
@@ -1473,5 +1454,64 @@ public class MultiJoinTestPrograms {
                                     + "FROM Users u "
                                     + "INNER JOIN Orders o ON u.user_id = o.user_id AND u.region = o.region "
                                     + "INNER JOIN Payments p ON u.user_id = p.user_id AND o.product = p.product_type")
+                    .build();
+
+    public static final TableTestProgram MULTI_JOIN_WITH_CROSS_JOIN_UNNEST =
+            TableTestProgram.of(
+                            "multi-join-with-cross-join-unnest",
+                            "multi join with cross join unnest to split string array")
+                    .setupTableSource(
+                            SourceTestStep.newBuilder("Users")
+                                    .addSchema(
+                                            "user_id STRING PRIMARY KEY NOT ENFORCED",
+                                            "name STRING",
+                                            "tags STRING")
+                                    .producedValues(
+                                            Row.ofKind(
+                                                    RowKind.INSERT,
+                                                    "1",
+                                                    "Alice",
+                                                    "[\"premium\", \"vip\"]"),
+                                            Row.ofKind(RowKind.INSERT, "2", "Bob", "[\"basic\"]"),
+                                            Row.ofKind(
+                                                    RowKind.INSERT,
+                                                    "3",
+                                                    "Charlie",
+                                                    "[\"premium\", \"gold\", \"vip\"]"))
+                                    .build())
+                    .setupTableSource(
+                            SourceTestStep.newBuilder("Orders")
+                                    .addSchema(
+                                            "user_id STRING",
+                                            "order_id STRING PRIMARY KEY NOT ENFORCED",
+                                            "product STRING")
+                                    .producedValues(
+                                            Row.ofKind(RowKind.INSERT, "1", "order1", "Laptop"),
+                                            Row.ofKind(RowKind.INSERT, "2", "order2", "Mouse"),
+                                            Row.ofKind(RowKind.INSERT, "3", "order3", "Keyboard"))
+                                    .build())
+                    .setupTableSink(
+                            SinkTestStep.newBuilder("sink")
+                                    .addSchema(
+                                            "user_id STRING",
+                                            "name STRING",
+                                            "order_id STRING",
+                                            "product STRING",
+                                            "tag STRING")
+                                    .consumedValues(
+                                            "+I[1, Alice, order1, Laptop, premium]",
+                                            "+I[1, Alice, order1, Laptop, vip]",
+                                            "+I[2, Bob, order2, Mouse, basic]",
+                                            "+I[3, Charlie, order3, Keyboard, premium]",
+                                            "+I[3, Charlie, order3, Keyboard, gold]",
+                                            "+I[3, Charlie, order3, Keyboard, vip]")
+                                    .testMaterializedData()
+                                    .build())
+                    .runSql(
+                            "INSERT INTO sink "
+                                    + "SELECT u.user_id, u.name, o.order_id, o.product, tag "
+                                    + "FROM Users u "
+                                    + "INNER JOIN Orders o ON u.user_id = o.user_id "
+                                    + "CROSS JOIN UNNEST(split(REGEXP_REPLACE(u.tags, '^\\[|\\]$', ''), ', ')) AS t(tag)")
                     .build();
 }

@@ -1,7 +1,7 @@
 {
   "flinkVersion" : "2.2",
   "nodes" : [ {
-    "id" : 75,
+    "id" : 1,
     "type" : "stream-exec-table-source-scan_1",
     "scanTableSource" : {
       "table" : {
@@ -39,7 +39,7 @@
     "outputType" : "ROW<`InstrumentId` INT NOT NULL, `other2` VARCHAR(2147483647)>",
     "description" : "TableSourceScan(table=[[default_catalog, default_database, sharded, project=[InstrumentId, other2], metadata=[]]], fields=[InstrumentId, other2])"
   }, {
-    "id" : 76,
+    "id" : 2,
     "type" : "stream-exec-exchange_1",
     "inputProperties" : [ {
       "requiredDistribution" : {
@@ -52,7 +52,7 @@
     "outputType" : "ROW<`InstrumentId` INT NOT NULL, `other2` VARCHAR(2147483647)>",
     "description" : "Exchange(distribution=[hash[InstrumentId]])"
   }, {
-    "id" : 77,
+    "id" : 3,
     "type" : "stream-exec-table-source-scan_1",
     "scanTableSource" : {
       "table" : {
@@ -90,7 +90,7 @@
     "outputType" : "ROW<`InstrumentId` INT NOT NULL, `CID` BIGINT NOT NULL>",
     "description" : "TableSourceScan(table=[[default_catalog, default_database, by_cid, project=[InstrumentId, CID], metadata=[]]], fields=[InstrumentId, CID])"
   }, {
-    "id" : 78,
+    "id" : 4,
     "type" : "stream-exec-exchange_1",
     "inputProperties" : [ {
       "requiredDistribution" : {
@@ -103,7 +103,7 @@
     "outputType" : "ROW<`InstrumentId` INT NOT NULL, `CID` BIGINT NOT NULL>",
     "description" : "Exchange(distribution=[hash[InstrumentId]])"
   }, {
-    "id" : 79,
+    "id" : 5,
     "type" : "stream-exec-table-source-scan_1",
     "scanTableSource" : {
       "table" : {
@@ -141,7 +141,7 @@
     "outputType" : "ROW<`InstrumentId` INT NOT NULL, `sensorId` BIGINT NOT NULL>",
     "description" : "TableSourceScan(table=[[default_catalog, default_database, sensor, project=[InstrumentId, sensorId], metadata=[]]], fields=[InstrumentId, sensorId])"
   }, {
-    "id" : 80,
+    "id" : 6,
     "type" : "stream-exec-exchange_1",
     "inputProperties" : [ {
       "requiredDistribution" : {
@@ -154,7 +154,7 @@
     "outputType" : "ROW<`InstrumentId` INT NOT NULL, `sensorId` BIGINT NOT NULL>",
     "description" : "Exchange(distribution=[hash[InstrumentId]])"
   }, {
-    "id" : 81,
+    "id" : 7,
     "type" : "stream-exec-multi-join_1",
     "joinTypes" : [ "INNER", "INNER", "INNER" ],
     "joinConditions" : [ {
@@ -278,7 +278,7 @@
     "outputType" : "ROW<`InstrumentId` INT NOT NULL, `other2` VARCHAR(2147483647), `InstrumentId0` INT NOT NULL, `CID` BIGINT NOT NULL, `InstrumentId1` INT NOT NULL, `sensorId` BIGINT NOT NULL>",
     "description" : "MultiJoin(joinFilter=[AND(=($2, $4), =($2, $0))], joinTypes=[[INNER, INNER, INNER]], joinConditions=[[true, =($2, $0), =($2, $4)]], joinAttributeMap=[{1=[LeftInputId:0;LeftFieldIndex:0;RightInputId:1;RightFieldIndex:0;], 2=[LeftInputId:1;LeftFieldIndex:0;RightInputId:2;RightFieldIndex:0;]}], select=[InstrumentId,other2,InstrumentId0,CID,InstrumentId1,sensorId], rowType=[RecordType(INTEGER InstrumentId, VARCHAR(2147483647) other2, INTEGER InstrumentId0, BIGINT CID, INTEGER InstrumentId1, BIGINT sensorId)])"
   }, {
-    "id" : 82,
+    "id" : 8,
     "type" : "stream-exec-calc_1",
     "projection" : [ {
       "kind" : "INPUT_REF",
@@ -316,7 +316,7 @@
     "outputType" : "ROW<`InstrumentId` INT NOT NULL, `CID` BIGINT NOT NULL, `InstrumentId0` INT NOT NULL, `sensorId` BIGINT NOT NULL, `InstrumentId1` INT NOT NULL, `other2` VARCHAR(2147483647)>",
     "description" : "Calc(select=[InstrumentId0 AS InstrumentId, CID, InstrumentId1 AS InstrumentId0, sensorId, InstrumentId AS InstrumentId1, other2])"
   }, {
-    "id" : 83,
+    "id" : 9,
     "type" : "stream-exec-sink_1",
     "configuration" : {
       "table.exec.sink.keyed-shuffle" : "AUTO",
@@ -371,57 +371,57 @@
     "description" : "Sink(table=[default_catalog.default_database.aggregation], fields=[InstrumentId, CID, InstrumentId0, sensorId, InstrumentId1, other2])"
   } ],
   "edges" : [ {
-    "source" : 75,
-    "target" : 76,
+    "source" : 1,
+    "target" : 2,
     "shuffle" : {
       "type" : "FORWARD"
     },
     "shuffleMode" : "PIPELINED"
   }, {
-    "source" : 77,
-    "target" : 78,
+    "source" : 3,
+    "target" : 4,
     "shuffle" : {
       "type" : "FORWARD"
     },
     "shuffleMode" : "PIPELINED"
   }, {
-    "source" : 79,
-    "target" : 80,
+    "source" : 5,
+    "target" : 6,
     "shuffle" : {
       "type" : "FORWARD"
     },
     "shuffleMode" : "PIPELINED"
   }, {
-    "source" : 76,
-    "target" : 81,
+    "source" : 2,
+    "target" : 7,
     "shuffle" : {
       "type" : "FORWARD"
     },
     "shuffleMode" : "PIPELINED"
   }, {
-    "source" : 78,
-    "target" : 81,
+    "source" : 4,
+    "target" : 7,
     "shuffle" : {
       "type" : "FORWARD"
     },
     "shuffleMode" : "PIPELINED"
   }, {
-    "source" : 80,
-    "target" : 81,
+    "source" : 6,
+    "target" : 7,
     "shuffle" : {
       "type" : "FORWARD"
     },
     "shuffleMode" : "PIPELINED"
   }, {
-    "source" : 81,
-    "target" : 82,
+    "source" : 7,
+    "target" : 8,
     "shuffle" : {
       "type" : "FORWARD"
     },
     "shuffleMode" : "PIPELINED"
   }, {
-    "source" : 82,
-    "target" : 83,
+    "source" : 8,
+    "target" : 9,
     "shuffle" : {
       "type" : "FORWARD"
     },
