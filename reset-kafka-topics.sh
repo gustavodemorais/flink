@@ -17,7 +17,8 @@ WAREHOUSES_TOPIC="warehouses_topic"
 SHIPPING_TOPIC="shipping_topic"
 PAYMENT_TOPIC="payment_topic"
 INVENTORY_TOPIC="inventory_topic"
-JOIN_RESULTS_TOPIC="join_results_topic"
+JOIN_RESULTS_MJ_TOPIC="join_results_mj_topic"
+JOIN_RESULTS_BINARY_TOPIC="join_results_binary_topic"
 
 # Function to check if topic exists
 topic_exists() {
@@ -78,7 +79,8 @@ drop_topic "$WAREHOUSES_TOPIC"
 drop_topic "$SHIPPING_TOPIC"
 drop_topic "$PAYMENT_TOPIC"
 drop_topic "$INVENTORY_TOPIC"
-drop_topic "$JOIN_RESULTS_TOPIC"
+drop_topic "$JOIN_RESULTS_MJ_TOPIC"
+drop_topic "$JOIN_RESULTS_BINARY_TOPIC"
 
 # Wait a moment for cleanup
 #echo "Waiting for cleanup..."
@@ -96,7 +98,8 @@ create_topic "$WAREHOUSES_TOPIC" 1 1
 create_topic "$SHIPPING_TOPIC" 1 1
 create_topic "$PAYMENT_TOPIC" 1 1
 create_topic "$INVENTORY_TOPIC" 1 1
-# create_topic "$JOIN_RESULTS_TOPIC" 100 1
+create_topic "$JOIN_RESULTS_MJ_TOPIC" 1 1
+create_topic "$JOIN_RESULTS_BINARY_TOPIC" 1 1
 
 # List final topics
 echo "Topics after reset:"

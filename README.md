@@ -219,13 +219,34 @@ The Apache Flink project originated from the [Stratosphere](http://stratosphere.
 # MJ Benchmark
 How to run
 
-Start kafka
-docker-compose up -d
+If necessary, build: 
+
+// Prepare repo
+./mvnw clean install -DskipTests -Pskip-webui-build -T4
+cp config.yaml build-target/conf/config.yaml
+cp flink-sql-connector-kafka-4.0.1.jar-cp build-target/lib/flink-sql-connector-kafka-4.0.1.jar
+
+// Run containers
+docker-compose up -d (maybe run it 2x because kafka needs zookeper to be up first)
+(delete the containers and volumes if needed and restore if no space left)
+
+// Prepare cluster
 ./reset-kafka-topics.sh
 ./build-target/bin/stop-cluster.sh
 ./build-target/bin/start-cluster.sh
-./build-target/bin/taskmanager.sh start
-./build-target/bin/taskmanager.sh start
-./build-target/bin/sql-client.sh -j /Users/gdemorais/qdev/flink2/build-target/lib/flink-sql-connector-kafka-4.0-SNAPSHOT.jar -f benchmark-updating.sql
+./build-target/bin/taskmanager.sh start && ./build-target/bin/taskmanager.sh start
 
-Comments about the test types in the commits
+We now have one job and task manager running -> http://localhost:8081/#/job/running
+
+// Run script
+./build-target/bin/sql-client.sh -j /Users/gdemorais/qdev/flink2/build-target/lib/flink-sql-connector-kafka-4.0.1.jar -f benchmark-updating-faker.sql
+
+
+## How to get the latest flink-sql-connector-kafka..
+Download https://flink.apache.org/downloads/#apache-flink-kafka-connector-401
+cd into the folder
+maven-login
+./mvnw clean install -DskipTests -T4
+Copy flink-sql-connector/target/flink-sql-connector-kafka-4...jar into the build-target in /Users/gdemorais/qdev/flink2/build-target/lib/
+
+Error Caused by: java.io.FileNotFoundException: jar resource [/Users/gdemorais/qdev/flink2/build-target/lib/flink-sql-connector-kafka-4.0-SNAPSHOT.jar] not found.
