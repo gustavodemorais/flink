@@ -69,8 +69,8 @@ CREATE TABLE TenantDataGen
     update_time AS PROCTIME()
 ) WITH (
       'connector' = 'datagen',
-      'rows-per-second' = '10',
-      'number-of-rows' = '1000',
+      'rows-per-second' = '1000',
+      'number-of-rows' = '100000',
       'fields.tenant_id.min' = '1',
       'fields.tenant_id.max' = '1000',
       'fields.tentant_name.length' = '15',
@@ -99,8 +99,8 @@ CREATE TABLE SupplierDataGen
     update_time AS PROCTIME()
 ) WITH (
       'connector' = 'datagen',
-      'rows-per-second' = '10',
-      'number-of-rows' = '1000',
+      'rows-per-second' = '1000',
+      'number-of-rows' = '100000',
       'fields.tenant_id.min' = '1',
       'fields.tenant_id.max' = '1000',
       'fields.supplier_id.min' = '1',
@@ -134,8 +134,8 @@ CREATE TABLE ProductDataGen
     update_time AS PROCTIME()
 ) WITH (
       'connector' = 'datagen',
-      'rows-per-second' = '10',
-      'number-of-rows' = '1000',
+      'rows-per-second' = '1000',
+      'number-of-rows' = '100000',
       'fields.tenant_id.min' = '1',
       'fields.tenant_id.max' = '1000',
       'fields.product_id.min' = '1',
@@ -171,8 +171,8 @@ CREATE TABLE CategoryDataGen
     update_time AS PROCTIME()
 ) WITH (
       'connector' = 'datagen',
-      'rows-per-second' = '10',
-      'number-of-rows' = '1000',
+      'rows-per-second' = '1000',
+      'number-of-rows' = '100000',
       'fields.tenant_id.min' = '1',
       'fields.tenant_id.max' = '1000',
       'fields.category_id.min' = '1',
@@ -205,8 +205,8 @@ CREATE TABLE OrderDataGen
     update_time AS PROCTIME()
 ) WITH (
       'connector' = 'datagen',
-      'rows-per-second' = '10',
-      'number-of-rows' = '1000',
+      'rows-per-second' = '1000',
+      'number-of-rows' = '100000',
       'fields.tenant_id.min' = '1',
       'fields.tenant_id.max' = '1000',
       'fields.order_id.min' = '1',
@@ -244,8 +244,8 @@ CREATE TABLE CustomerDataGen
     update_time AS PROCTIME()
 ) WITH (
       'connector' = 'datagen',
-      'rows-per-second' = '10',
-      'number-of-rows' = '1000',
+      'rows-per-second' = '1000',
+      'number-of-rows' = '100000',
       'fields.tenant_id.min' = '1',
       'fields.tenant_id.max' = '1000',
       'fields.customer_id.min' = '1',
@@ -278,8 +278,8 @@ CREATE TABLE WarehouseDataGen
     update_time AS PROCTIME()
 ) WITH (
       'connector' = 'datagen',
-      'rows-per-second' = '10',
-      'number-of-rows' = '1000',
+      'rows-per-second' = '1000',
+      'number-of-rows' = '100000',
       'fields.tenant_id.min' = '1',
       'fields.tenant_id.max' = '1000',
       'fields.warehouse_id.min' = '1',
@@ -314,8 +314,8 @@ CREATE TABLE ShippingDataGen
     update_time AS PROCTIME()
 ) WITH (
       'connector' = 'datagen',
-      'rows-per-second' = '10',
-      'number-of-rows' = '1000',
+      'rows-per-second' = '1000',
+      'number-of-rows' = '100000',
       'fields.tenant_id.min' = '1',
       'fields.tenant_id.max' = '1000',
       'fields.shipping_id.min' = '1',
@@ -349,8 +349,8 @@ CREATE TABLE PaymentDataGen
     update_time AS PROCTIME()
 ) WITH (
       'connector' = 'datagen',
-      'rows-per-second' = '10',
-      'number-of-rows' = '1000',
+      'rows-per-second' = '1000',
+      'number-of-rows' = '100000',
       'fields.tenant_id.min' = '1',
       'fields.tenant_id.max' = '1000',
       'fields.payment_id.min' = '1',
@@ -385,8 +385,8 @@ CREATE TABLE InventoryDataGen
     update_time AS PROCTIME()
 ) WITH (
       'connector' = 'datagen',
-      'rows-per-second' = '10',
-      'number-of-rows' = '1000',
+      'rows-per-second' = '1000',
+      'number-of-rows' = '100000',
       'fields.tenant_id.min' = '1',
       'fields.tenant_id.max' = '1000',
       'fields.inventory_id.min' = '1',
@@ -420,7 +420,7 @@ CREATE TABLE TenantKafka
     PRIMARY KEY (tenant_id) NOT ENFORCED
 ) WITH (
       'connector' = 'upsert-kafka',
-      'topic' = 'tenant_topic',
+      'topic' = 'tenant_topic_100k',
       'properties.bootstrap.servers' = 'localhost:9092',
       'key.format' = 'json',
       'value.format' = 'json'
@@ -443,7 +443,7 @@ CREATE TABLE SuppliersKafka
     PRIMARY KEY (supplier_id) NOT ENFORCED
 ) WITH (
       'connector' = 'upsert-kafka',
-      'topic' = 'suppliers_topic',
+      'topic' = 'suppliers_topic_100k',
       'properties.bootstrap.servers' = 'localhost:9092',
       'key.format' = 'json',
       'value.format' = 'json'
@@ -466,7 +466,7 @@ CREATE TABLE ProductsKafka
     PRIMARY KEY (product_id) NOT ENFORCED
 ) WITH (
       'connector' = 'upsert-kafka',
-      'topic' = 'products_topic',
+      'topic' = 'products_topic_100k',
       'properties.bootstrap.servers' = 'localhost:9092',
       'key.format' = 'json',
       'value.format' = 'json'
@@ -488,7 +488,7 @@ CREATE TABLE CategoriesKafka
     PRIMARY KEY (category_id) NOT ENFORCED
 ) WITH (
       'connector' = 'upsert-kafka',
-      'topic' = 'categories_topic',
+      'topic' = 'categories_topic_100k',
       'properties.bootstrap.servers' = 'localhost:9092',
       'key.format' = 'json',
       'value.format' = 'json'
@@ -512,7 +512,7 @@ CREATE TABLE OrdersKafka
     PRIMARY KEY (tenant_id, order_id) NOT ENFORCED
 ) WITH (
       'connector' = 'upsert-kafka',
-      'topic' = 'orders_topic',
+      'topic' = 'orders_topic_100k',
       'properties.bootstrap.servers' = 'localhost:9092',
       'key.format' = 'json',
       'value.format' = 'json'
@@ -535,7 +535,7 @@ CREATE TABLE CustomersKafka
     PRIMARY KEY (customer_id) NOT ENFORCED
 ) WITH (
       'connector' = 'upsert-kafka',
-      'topic' = 'customers_topic',
+      'topic' = 'customers_topic_100k',
       'properties.bootstrap.servers' = 'localhost:9092',
       'key.format' = 'json',
       'value.format' = 'json'
@@ -558,7 +558,7 @@ CREATE TABLE WarehousesKafka
     PRIMARY KEY (warehouse_id) NOT ENFORCED
 ) WITH (
       'connector' = 'upsert-kafka',
-      'topic' = 'warehouses_topic',
+      'topic' = 'warehouses_topic_100k',
       'properties.bootstrap.servers' = 'localhost:9092',
       'key.format' = 'json',
       'value.format' = 'json'
@@ -581,7 +581,7 @@ CREATE TABLE ShippingKafka
     PRIMARY KEY (shipping_id) NOT ENFORCED
 ) WITH (
       'connector' = 'upsert-kafka',
-      'topic' = 'shipping_topic',
+      'topic' = 'shipping_topic_100k',
       'properties.bootstrap.servers' = 'localhost:9092',
       'key.format' = 'json',
       'value.format' = 'json'
@@ -604,7 +604,7 @@ CREATE TABLE PaymentKafka
     PRIMARY KEY (payment_id) NOT ENFORCED
 ) WITH (
       'connector' = 'upsert-kafka',
-      'topic' = 'payment_topic',
+      'topic' = 'payment_topic_100k',
       'properties.bootstrap.servers' = 'localhost:9092',
       'key.format' = 'json',
       'value.format' = 'json'
@@ -627,7 +627,7 @@ CREATE TABLE InventoryKafka
     PRIMARY KEY (inventory_id) NOT ENFORCED
 ) WITH (
       'connector' = 'upsert-kafka',
-      'topic' = 'inventory_topic',
+      'topic' = 'inventory_topic_100k',
       'properties.bootstrap.servers' = 'localhost:9092',
       'key.format' = 'json',
       'value.format' = 'json'
@@ -650,13 +650,13 @@ CREATE TABLE JoinResultsMJ
       'connector' = 'blackhole'
 
 --         'connector' = 'upsert-kafka',
---       'topic' = 'join_results_mj_topic',
+--       'topic' = 'join_results_mj_topic_100k',
 --       'properties.bootstrap.servers' = 'localhost:9092',
 --       'key.format' = 'json',
 --       'value.format' = 'json'
 
 --         'connector' = 'kafka',
---         'topic' = 'join_results_mj_topic',
+--         'topic' = 'join_results_mj_topic_100k',
 --         'properties.bootstrap.servers' = 'localhost:9092',
 --         'format' = 'json'
       );
@@ -678,13 +678,13 @@ CREATE TABLE JoinResultsBinary
        'connector' = 'blackhole'
 
 --     'connector' = 'upsert-kafka',
---       'topic' = 'join_results_binary_topic',
+--       'topic' = 'join_results_binary_topic_100k',
 --       'properties.bootstrap.servers' = 'localhost:9092',
 --       'key.format' = 'json',
 --       'value.format' = 'json'
 
 --       'connector' = 'kafka',
---       'topic' = 'join_results_binary_topic',
+--       'topic' = 'join_results_binary_topic_100k',
 --       'properties.bootstrap.servers' = 'localhost:9092',
 --       'format' = 'json'
       );
@@ -838,70 +838,3 @@ SELECT tenant_id,
        storage_location,
        large_array
 FROM InventoryDataGen;
-
--- Set parallelism for 10-way join
-/*SET
-'parallelism.default' = '10';
-SET
-'table.optimizer.multi-join.enabled' = 'true';
-
-INSERT INTO JoinResultsMJ
-SELECT t.tenant_id                    as tenant_id,
-       o.order_id                     AS order_id,
-       COALESCE(s.supplier_id, -1)    AS supplier_id,
-       COALESCE(p.product_id, -1)     AS product_id,
-       COALESCE(c.category_id, -1)    AS category_id,
-       COALESCE(cust.customer_id, -1) AS customer_id,
-       COALESCE(w.warehouse_id, -1)   AS warehouse_id,
-       COALESCE(sh.shipping_id, -1)   AS shipping_id,
-       COALESCE(pay.payment_id, -1)   AS payment_id,
-       COALESCE(i.inventory_id, -1)   AS inventory_id
-FROM OrdersKafka o
-         LEFT JOIN SuppliersKafka s ON o.tenant_id = s.tenant_id
-         LEFT JOIN ProductsKafka p ON o.tenant_id = p.tenant_id
-         LEFT JOIN CategoriesKafka c ON o.tenant_id = c.tenant_id
-         LEFT JOIN TenantKafka t ON o.tenant_id = t.tenant_id
-         LEFT JOIN CustomersKafka cust ON o.tenant_id = cust.tenant_id
-         LEFT JOIN WarehousesKafka w ON o.tenant_id = w.tenant_id
-         LEFT JOIN ShippingKafka sh ON o.tenant_id = sh.tenant_id
-         LEFT JOIN PaymentKafka pay ON o.tenant_id = pay.tenant_id
-         LEFT JOIN InventoryKafka i ON o.tenant_id = i.tenant_id
-         CROSS JOIN (SELECT 1 AS dummy_col) AS d;
-/*WHERE
-    CARDINALITY(t.large_array) > 0 OR
-    CARDINALITY(s.large_array) > 0 OR
-    CARDINALITY(p.large_array) > 0 OR
-    CARDINALITY(c.large_array) > 0 OR
-    CARDINALITY(o.large_array) > 0 OR
-    CARDINALITY(cust.large_array) > 0 OR
-    CARDINALITY(w.large_array) > 0 OR
-    CARDINALITY(sh.large_array) > 0 OR
-    CARDINALITY(pay.large_array) > 0 OR
-    CARDINALITY(i.large_array) > 0;*/
-
-SET
-'table.optimizer.multi-join.enabled' = 'false';
-
--- 10-way Join: Alternative approach with window functions for key preservation
-INSERT INTO JoinResultsBinary
-SELECT t.tenant_id                    as tenant_id,
-       o.order_id                     AS order_id,
-       COALESCE(s.supplier_id, -1)    AS supplier_id,
-       COALESCE(p.product_id, -1)     AS product_id,
-       COALESCE(c.category_id, -1)    AS category_id,
-       COALESCE(cust.customer_id, -1) AS customer_id,
-       COALESCE(w.warehouse_id, -1)   AS warehouse_id,
-       COALESCE(sh.shipping_id, -1)   AS shipping_id,
-       COALESCE(pay.payment_id, -1)   AS payment_id,
-       COALESCE(i.inventory_id, -1)   AS inventory_id
-FROM OrdersKafka o
-         LEFT JOIN SuppliersKafka s ON o.tenant_id = s.tenant_id
-         LEFT JOIN ProductsKafka p ON o.tenant_id = p.tenant_id
-         LEFT JOIN CategoriesKafka c ON o.tenant_id = c.tenant_id
-         LEFT JOIN TenantKafka t ON o.tenant_id = t.tenant_id
-         LEFT JOIN CustomersKafka cust ON o.tenant_id = cust.tenant_id
-         LEFT JOIN WarehousesKafka w ON o.tenant_id = w.tenant_id
-         LEFT JOIN ShippingKafka sh ON o.tenant_id = sh.tenant_id
-         LEFT JOIN PaymentKafka pay ON o.tenant_id = pay.tenant_id
-         LEFT JOIN InventoryKafka i ON o.tenant_id = i.tenant_id
-         CROSS JOIN (SELECT 1 AS dummy_col) AS d;*/

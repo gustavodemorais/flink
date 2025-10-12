@@ -7,18 +7,18 @@ echo "=== Kafka Topics Reset Script ==="
 echo "Dropping and recreating Kafka topics..."
 
 # Topic names
-TENANT_TOPIC="tenant_topic"
-SUPPLIERS_TOPIC="suppliers_topic"
-PRODUCTS_TOPIC="products_topic"
-CATEGORIES_TOPIC="categories_topic"
-ORDERS_TOPIC="orders_topic"
-CUSTOMERS_TOPIC="customers_topic"
-WAREHOUSES_TOPIC="warehouses_topic"
-SHIPPING_TOPIC="shipping_topic"
-PAYMENT_TOPIC="payment_topic"
-INVENTORY_TOPIC="inventory_topic"
-JOIN_RESULTS_MJ_TOPIC="join_results_mj_topic"
-JOIN_RESULTS_BINARY_TOPIC="join_results_binary_topic"
+TENANT_TOPIC="tenant_topic_1kk"
+SUPPLIERS_TOPIC="suppliers_topic_1kk"
+PRODUCTS_TOPIC="products_topic_1kk"
+CATEGORIES_TOPIC="categories_topic_1kk"
+ORDERS_TOPIC="orders_topic_1kk"
+CUSTOMERS_TOPIC="customers_topic_1kk"
+WAREHOUSES_TOPIC="warehouses_topic_1kk"
+SHIPPING_TOPIC="shipping_topic_1kk"
+PAYMENT_TOPIC="payment_topic_1kk"
+INVENTORY_TOPIC="inventory_topic_1kk"
+JOIN_RESULTS_MJ_TOPIC="join_results_mj_topic_1kk"
+JOIN_RESULTS_BINARY_TOPIC="join_results_binary_topic_1kk"
 
 # Function to check if topic exists
 topic_exists() {
@@ -88,18 +88,18 @@ drop_topic "$JOIN_RESULTS_BINARY_TOPIC"
 
 # Create topics
 echo "Creating topics..."
-create_topic "$TENANT_TOPIC" 1 1
-create_topic "$SUPPLIERS_TOPIC" 1 1
-create_topic "$PRODUCTS_TOPIC" 1 1
-create_topic "$CATEGORIES_TOPIC" 1 1
-create_topic "$ORDERS_TOPIC" 1 1
-create_topic "$CUSTOMERS_TOPIC" 1 1
-create_topic "$WAREHOUSES_TOPIC" 1 1
-create_topic "$SHIPPING_TOPIC" 1 1
-create_topic "$PAYMENT_TOPIC" 1 1
-create_topic "$INVENTORY_TOPIC" 1 1
-create_topic "$JOIN_RESULTS_MJ_TOPIC" 1 1
-create_topic "$JOIN_RESULTS_BINARY_TOPIC" 1 1
+create_topic "$TENANT_TOPIC" 10 1
+create_topic "$SUPPLIERS_TOPIC" 10 1
+create_topic "$PRODUCTS_TOPIC" 10 1
+create_topic "$CATEGORIES_TOPIC" 10 1
+create_topic "$ORDERS_TOPIC" 10 1
+create_topic "$CUSTOMERS_TOPIC" 10 1
+create_topic "$WAREHOUSES_TOPIC" 10 1
+create_topic "$SHIPPING_TOPIC" 10 1
+create_topic "$PAYMENT_TOPIC" 10 1
+create_topic "$INVENTORY_TOPIC" 10 1
+create_topic "$JOIN_RESULTS_MJ_TOPIC" 10 1
+create_topic "$JOIN_RESULTS_BINARY_TOPIC" 10 1
 
 # List final topics
 echo "Topics after reset:"

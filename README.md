@@ -239,7 +239,7 @@ docker-compose up -d (maybe run it 2x because kafka needs zookeper to be up firs
 We now have one job and task manager running -> http://localhost:8081/#/job/running
 
 // Run script
-./build-target/bin/sql-client.sh -j /Users/gdemorais/qdev/flink2/build-target/lib/flink-sql-connector-kafka-4.0.1.jar -f benchmark-updating-faker.sql
+./build-target/bin/sql-client.sh -j /Users/gdemorais/qdev/flink2/build-target/lib/flink-sql-connector-kafka-4.0.1.jar -f benchmark-updating.sql
 
 
 ## How to get the latest flink-sql-connector-kafka..
