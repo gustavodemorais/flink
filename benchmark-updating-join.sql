@@ -25,7 +25,7 @@ SET
 'state.checkpoints.dir' = 'file:///Users/gdemorais/qdev/flink2/build-target/flink-checkpoints';
 
 SET
-'execution.checkpointing.interval' = '10s';
+'execution.checkpointing.interval' = '5min';
 SET
 'execution.checkpointing.timeout' = '60min';
 SET
@@ -51,12 +51,12 @@ SET
 SET
 'table.connector.kafka.consumer.send.buffer.bytes' = '131072';
 
-SET 'state.backend.rocksdb.metrics.num-running-compactions' = 'true';
-SET 'state.backend.rocksdb.metrics.compaction-pending' = 'true';
-SET 'state.backend.rocksdb.metrics.estimate-pending-compaction-bytes' = 'true';
-SET 'state.backend.rocksdb.metrics.mem-table-flush-pending' = 'true';
-SET 'state.backend.rocksdb.metrics.cur-size-all-mem-tables' = 'true';
-SET 'state.backend.rocksdb.metrics.estimate-live-data-size' = 'true';
+-- SET 'state.backend.rocksdb.metrics.num-running-compactions' = 'true';
+-- SET 'state.backend.rocksdb.metrics.compaction-pending' = 'true';
+-- SET 'state.backend.rocksdb.metrics.estimate-pending-compaction-bytes' = 'true';
+-- SET 'state.backend.rocksdb.metrics.mem-table-flush-pending' = 'true';
+-- SET 'state.backend.rocksdb.metrics.cur-size-all-mem-tables' = 'true';
+-- SET 'state.backend.rocksdb.metrics.estimate-live-data-size' = 'true';
 
 -- Set up the Tenant Kafka sink table with upsert support
 CREATE TABLE TenantKafka
@@ -360,13 +360,13 @@ SELECT t.tenant_id                    as tenant_id,
        pay.large_array                AS payment_large_array,
        i.large_array                  AS inventory_large_array
 FROM OrdersKafka o
-         LEFT JOIN (SELECT * FROM SuppliersKafka WHERE tenant_id < 500000) s ON o.tenant_id = s.tenant_id
-         LEFT JOIN (SELECT * FROM ProductsKafka WHERE tenant_id < 500000) p ON o.tenant_id = p.tenant_id
-         LEFT JOIN (SELECT * FROM CategoriesKafka WHERE tenant_id < 500000) c ON o.tenant_id = c.tenant_id
-         LEFT JOIN (SELECT * FROM TenantKafka WHERE tenant_id < 500000) t ON o.tenant_id = t.tenant_id
-         LEFT JOIN (SELECT * FROM CustomersKafka WHERE tenant_id < 500000) cust ON o.tenant_id = cust.tenant_id
-         LEFT JOIN (SELECT * FROM WarehousesKafka WHERE tenant_id < 500000) w ON o.tenant_id = w.tenant_id
-         LEFT JOIN (SELECT * FROM ShippingKafka WHERE tenant_id < 500000) sh ON o.tenant_id = sh.tenant_id
-         LEFT JOIN (SELECT * FROM PaymentKafka WHERE tenant_id < 500000) pay ON o.tenant_id = pay.tenant_id
-         LEFT JOIN (SELECT * FROM InventoryKafka WHERE tenant_id < 500000) i ON o.tenant_id = i.tenant_id
-WHERE o.tenant_id < 500000;
+         LEFT JOIN (SELECT * FROM SuppliersKafka WHERE tenant_id < 200000) s ON o.tenant_id = s.tenant_id
+         LEFT JOIN (SELECT * FROM ProductsKafka WHERE tenant_id < 200000) p ON o.tenant_id = p.tenant_id
+         LEFT JOIN (SELECT * FROM CategoriesKafka WHERE tenant_id < 200000) c ON o.tenant_id = c.tenant_id
+         LEFT JOIN (SELECT * FROM TenantKafka WHERE tenant_id < 200000) t ON o.tenant_id = t.tenant_id
+         LEFT JOIN (SELECT * FROM CustomersKafka WHERE tenant_id < 200000) cust ON o.tenant_id = cust.tenant_id
+         LEFT JOIN (SELECT * FROM WarehousesKafka WHERE tenant_id < 200000) w ON o.tenant_id = w.tenant_id
+         LEFT JOIN (SELECT * FROM ShippingKafka WHERE tenant_id < 200000) sh ON o.tenant_id = sh.tenant_id
+         LEFT JOIN (SELECT * FROM PaymentKafka WHERE tenant_id < 200000) pay ON o.tenant_id = pay.tenant_id
+         LEFT JOIN (SELECT * FROM InventoryKafka WHERE tenant_id < 200000) i ON o.tenant_id = i.tenant_id
+WHERE o.tenant_id < 200000;

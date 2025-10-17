@@ -309,3 +309,25 @@ rest:
 #       fs.refresh-interval: 10000
 
 pekko.ask.timeout: 60 s
+
+# Add to flink-conf.yaml
+#state.backend: rocksdb
+#state.backend.incremental: true
+#
+## Enable ALL RocksDB metrics for debugging
+#state.backend.rocksdb.metrics.num-running-compactions: true
+#state.backend.rocksdb.metrics.compaction-pending: true
+#state.backend.rocksdb.metrics.estimate-pending-compaction-bytes: true
+#state.backend.rocksdb.metrics.mem-table-flush-pending: true
+#state.backend.rocksdb.metrics.cur-size-all-mem-tables: true
+#state.backend.rocksdb.metrics.estimate-live-data-size: true
+#state.backend.rocksdb.metrics.num-immutable-mem-table: true
+#state.backend.rocksdb.metrics.size-all-mem-tables: true
+#state.backend.rocksdb.metrics.num-entries-active-mem-table: true
+#state.backend.rocksdb.metrics.block-cache-usage: true
+#state.backend.rocksdb.metrics.block-cache-capacity: true
+#state.backend.rocksdb.metrics.column-family-as-variable: true
+#state.backend.rocksdb.metrics.num-running-flushes: true
+#state.backend.rocksdb.metrics.background-errors: true
+#state.backend.rocksdb.metrics.block-cache-hit: true
+#state.backend.rocksdb.metrics.block-cache-miss: true
