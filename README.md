@@ -230,7 +230,7 @@ cp flink-sql-connector-kafka-4.0.1.jar-cp build-target/lib/flink-sql-connector-k
 docker-compose up -d (maybe run it 2x because kafka needs zookeper to be up first)
 (delete the containers and volumes if needed and restore if no space left)
 
-// Prepare cluster
+// Prepare cluster[flink-2.2-SNAPSHOT-bin](flink-dist/target/flink-2.2-SNAPSHOT-bin)
 ./reset-kafka-topics.sh
 ./build-target/bin/stop-cluster.sh
 ./build-target/bin/start-cluster.sh
@@ -243,7 +243,9 @@ We now have one job and task manager running -> http://localhost:8081/#/job/runn
 
 
 ## How to get the latest flink-sql-connector-kafka..
-Download https://flink.apache.org/downloads/#apache-flink-kafka-connector-401
+The jar can directly be downloaded from https://mvnrepository.com/artifact/org.apache.flink/flink-connector-kafka
+You can see the releaeses and compatibility info here https://flink.apache.org/downloads/#apache-flink-kafka-connector-401
+
 cd into the folder
 maven-login
 ./mvnw clean install -DskipTests -T4

@@ -331,3 +331,5 @@ pekko.ask.timeout: 60 s
 #state.backend.rocksdb.metrics.background-errors: true
 #state.backend.rocksdb.metrics.block-cache-hit: true
 #state.backend.rocksdb.metrics.block-cache-miss: true
+
+rest.profiling.enabled: true
